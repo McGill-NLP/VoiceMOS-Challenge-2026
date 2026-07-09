@@ -2,19 +2,15 @@
   "source_csv": "/network/scratch/g/guzmand/Repositories/VoiceMOS-Challenge-2026/track3/data/vmc2026_track3_train_phase_distro_v3_syn/sets/train.csv",
   "seed": 42,
   "n_ood_systems": 2,
-  "n_ood_utterances": 6,
+  "n_ood_listeners": 2,
   "dev_id_frac": 0.1,
   "ood_systems": [
     "sys006",
     "sys026"
   ],
-  "ood_utterances": [
-    "utt014",
-    "utt064",
-    "utt082",
-    "utt136",
-    "utt146",
-    "utt172"
+  "ood_listeners": [
+    "01",
+    "24"
   ],
   "train_systems": [
     "sys001",
@@ -39,19 +35,19 @@
   ],
   "counts": {
     "rows": {
-      "train": 10637,
-      "dev_ID": 1180,
-      "dev_OOD": 1870
+      "train": 10227,
+      "dev_ID": 1152,
+      "dev_OOD": 2308
     },
-    "samples": {
-      "train": 2177,
-      "dev_ID": 242,
-      "dev_OOD": 381
+    "cells": {
+      "train": 393,
+      "dev_ID": 44,
+      "dev_OOD": 88
     },
     "dev_OOD_by_type": {
-      "unseen_system": 257,
-      "unseen_utterance": 112,
-      "unseen_both": 12
+      "unseen_system": 46,
+      "unseen_listener": 38,
+      "unseen_both": 4
     }
   }
 }
