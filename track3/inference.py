@@ -7,25 +7,75 @@ import logging
 import os
 import time
 
+import numpy as np
 import torch
 import torchaudio
 from tqdm import tqdm
 
-from model import Model
+from model import CLASSIFIER_TYPE, Model, decode_score
+
+# Must match the NUM_CLASSES used in finetune.py: spk_sim / acc_sim ratings
+# live on a 1-5 scale, discretized into 0-indexed ordinal classes.
+NUM_CLASSES = 5
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Inference for VoiceMOS 2026 Track 3 (Zero-shot or Fine-tuned).")
-    parser.add_argument("--data-root", required=True, type=str, help="Root directory of the dataset distribution.")
-    parser.add_argument("--csv-path", required=True, type=str, help="CSV file path to do inference (e.g. sets/dev.csv).")
-    parser.add_argument("--out", type=str, required=True, help="Path to save the output predictions CSV.")
-    parser.add_argument("--model-name", type=str, default="speechbrain/spkrec-ecapa-voxceleb", help="SpeechBrain model ID.")
-    parser.add_argument("--checkpoint", type=str, default=None, help="Path to fine-tuned .pt checkpoint. If not provided, runs zero-shot.")
-    parser.add_argument("--target-metric", type=str, default="spk_sim", choices=["spk_sim", "acc_sim"], help="Metric to predict.")
+    parser = argparse.ArgumentParser(
+        description="Inference for VoiceMOS 2026 Track 3 (Zero-shot or Fine-tuned)."
+    )
+    parser.add_argument(
+        "--data-root",
+        required=True,
+        type=str,
+        help="Root directory of the dataset distribution.",
+    )
+    parser.add_argument(
+        "--csv-path",
+        required=True,
+        type=str,
+        help="CSV file path to do inference (e.g. sets/dev.csv).",
+    )
+    parser.add_argument(
+        "--out",
+        type=str,
+        required=True,
+        help="Path to save the output predictions CSV.",
+    )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        default="speechbrain/spkrec-ecapa-voxceleb",
+        help="SpeechBrain model ID.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to fine-tuned .pt checkpoint. If not provided, runs zero-shot.",
+    )
+    parser.add_argument(
+        "--target-metric",
+        type=str,
+        default="spk_sim",
+        choices=["spk_sim", "acc_sim"],
+        help="Metric to predict.",
+    )
+    parser.add_argument(
+        "--classifier-type",
+        type=CLASSIFIER_TYPE,
+        default=CLASSIFIER_TYPE.REGULAR,
+        help="Classifier type the checkpoint was trained with (CORAL, CORN, or REGULAR).",
+    )
     parser.add_argument("--verbose", type=int, default=1, help="logging level.")
     args = parser.parse_args()
 
-    log_level = logging.DEBUG if args.verbose > 1 else logging.INFO if args.verbose > 0 else logging.WARN
+    log_level = (
+        logging.DEBUG
+        if args.verbose > 1
+        else logging.INFO
+        if args.verbose > 0
+        else logging.WARN
+    )
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s",
@@ -33,10 +83,10 @@ def main():
 
     # Ensure output directory exists
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
-    
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info(f"Using device: {device}")
-    
+
     is_zero_shot = args.checkpoint is None
 
     # 1. Load Model dynamically based on the mode
@@ -46,67 +96,75 @@ def main():
             model_name=args.model_name,
             use_projection=False,
             freeze_ssl=True,
-            mlp_heads=[]
+            mlp_heads=[],
         )
     else:
-        logging.info(f"Initializing Model in FINE-TUNED mode for {args.target_metric}...")
+        logging.info(
+            f"Initializing Model in FINE-TUNED mode for {args.target_metric} ({args.classifier_type.value})..."
+        )
         model = Model(
             model_name=args.model_name,
             use_projection=True,
             freeze_ssl=False,
-            mlp_heads=[args.target_metric]
+            mlp_heads=[args.target_metric],
+            classifier_type=args.classifier_type,
         )
         logging.info(f"Loading weights from {args.checkpoint}...")
         model.load_state_dict(torch.load(args.checkpoint, map_location="cpu"))
-        
+
     model.to(device)
     model.eval()
 
     # 2. Load Dataset Metadata
     logging.info(f"Loading Dataset from {args.csv_path}")
     dataset = []
-    with open(args.csv_path, 'r', encoding='utf-8') as f:
+    with open(args.csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             dataset.append(row)
     logging.info(f"Number of inference samples = {len(dataset)}.")
 
     out_results = []
+    true_scores = []
+    pred_scores = []
     start_time = time.time()
-    
+
     # 3. Inference Loop
     for batch in tqdm(dataset, desc="[inference]"):
         wav_a_rel = batch.get("wav_a_path")
         wav_b_rel = batch.get("wav_b_path")
-        
+
         if not wav_a_rel or not wav_b_rel:
             logging.warning(f"Skipping row - missing audio paths: {batch}")
             continue
-            
+
         # Resolve absolute paths based on the provided data root
         wav_a_path = os.path.join(args.data_root, wav_a_rel)
         wav_b_path = os.path.join(args.data_root, wav_b_rel)
-        
+
         try:
             # Load audio using torchaudio
             wav_a, sr_a = torchaudio.load(wav_a_path)
             wav_b, sr_b = torchaudio.load(wav_b_path)
-            
+
             # Ensure 16kHz sample rate
-            if sr_a != 16000: wav_a = torchaudio.functional.resample(wav_a, sr_a, 16000)
-            if sr_b != 16000: wav_b = torchaudio.functional.resample(wav_b, sr_b, 16000)
+            if sr_a != 16000:
+                wav_a = torchaudio.functional.resample(wav_a, sr_a, 16000)
+            if sr_b != 16000:
+                wav_b = torchaudio.functional.resample(wav_b, sr_b, 16000)
 
             with torch.no_grad():
                 # Pass batch=1 tensors to the model
                 outputs = model(wav_a.to(device), wav_b.to(device))
-                
+
                 if is_zero_shot:
                     # In zero-shot, fallback to the raw cosine similarity computation
                     pred_score = outputs["cos_sim"].item()
                 else:
-                    # In fine-tuned mode, grab the specific metric projection head output
-                    pred_score = outputs[args.target_metric].item()
-            
+                    pred_score = decode_score(
+                        args.classifier_type, outputs[args.target_metric]
+                    ).item()
+
         except Exception as e:
             logging.error(f"Failed to process pair {wav_a_rel} and {wav_b_rel}: {e}")
             continue
@@ -114,13 +172,26 @@ def main():
         # Build the output row: copy the original data and append our predictions
         out_row = batch.copy()
         out_row[f"pred_{args.target_metric}"] = pred_score
-        
+
         out_results.append(out_row)
+
+        # If the input CSV carries ground-truth ratings (e.g. train.csv or a
+        # dev set with labels), track them for an MSE summary below.
+        true_val = batch.get(args.target_metric)
+        if true_val not in (None, ""):
+            true_scores.append(float(true_val))
+            pred_scores.append(pred_score)
 
     total_time = time.time() - start_time
     logging.info(f"Total inference time = {total_time:.2f} secs.")
     if len(out_results) > 0:
         logging.info(f"Average speed = {total_time / len(out_results):.3f} sec / pair.")
+
+    if true_scores:
+        mse = np.mean((np.array(true_scores) - np.array(pred_scores)) ** 2)
+        logging.info(
+            f"MSE against {args.target_metric} ground truth ({len(true_scores)} pairs) = {mse:.4f}"
+        )
 
     # 4. Save Results
     if len(out_results) > 0:
@@ -132,6 +203,7 @@ def main():
         logging.info(f"Predictions saved to {args.out}")
     else:
         logging.warning("No results to save.")
+
 
 if __name__ == "__main__":
     main()
