@@ -183,7 +183,12 @@ uv run python inference.py \
     --target-metric both \
     --out /home/mila/j/jeony/scratch/voicemos_v2/track3/egs/submissions/260719-v2.2-jointfreeze10000/answer.txt
 ```
-
+```scores:
+{
+    "TRACK3_SPK_UTT_SRCC": 0.45985246526489576,
+    "TRACK3_ACC_UTT_SRCC": 0.4090524132526068
+}
+```
 
 #### Notes:
 ```
