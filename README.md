@@ -161,12 +161,12 @@ uv run python inference.py \
 ```
 
 
-'''scores:
+```scores:
 {
     "TRACK3_SPK_UTT_SRCC": 0.45302064288729904,
     "TRACK3_ACC_UTT_SRCC": 0.4697257775601953
 }
-'''
+```
 
 
 ### 260719-v3.2-jointlyTrained: freeze 10000 steps then unfreeze
