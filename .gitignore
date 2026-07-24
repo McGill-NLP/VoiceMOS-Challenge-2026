@@ -217,6 +217,11 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Others
+# Data
 track3/data/vmc2026_track3_train_phase_distro_v3_syn
 track3/data/vmc2026_track3_train_phase_distro_v3_vctk
+track3/data/VCTK-Corpus
+
+# Others
+dev.ipynb
+SpeechLLM-as-Judges/
