@@ -1,36 +1,55 @@
 # set -euo pipefail
 module load miniconda/3 && conda activate speecheval
 export DATA_ROOT=../data/vmc2026_track3_train_phase_distro_v3_syn
-CKPT=../../SpeechLLM-as-Judges/checkpoint
 HERE=$(pwd)
+SLM=$HERE/SpeechLLM-as-Judges   # upstream repo now lives inside this folder
+CKPT=$SLM/checkpoint
+OUTDIR=$HERE/predictions        # all generated jsonl/csv go here
+mkdir -p "$OUTDIR"
+
+# timestamped progress logger
+log() { echo "[$(date '+%H:%M:%S')] $*"; }
+
+log "START pipeline | DATA_ROOT=$DATA_ROOT | CKPT=$CKPT | OUTDIR=$OUTDIR"
 
 # For each metric in {spk_sim, acc_sim}:
 for M in spk_sim acc_sim; do
-  # 1. CSV -> CompareEval JSONL (dedups on the wav pair)
-  python csv_to_swift.py --data-root $DATA_ROOT --csv-path ../data/dev-ID.csv \
-      --target-metric $M --out dev-ID.$M.jsonl
+  log "==================== METRIC: $M ===================="
 
-  # 2. Run the judge (swift). Tiny smoke test first: `head -5 dev-ID.$M.jsonl > tmp.jsonl`
-  cd ../../SpeechLLM-as-Judges/script
+  # 1. CSV -> CompareEval JSONL (dedups on the wav pair)
+  log "[$M] step 1/3: building CompareEval JSONL ..."
+  python csv_to_swift.py --data-root $DATA_ROOT --csv-path ../data/dev-ID.csv \
+      --target-metric $M --out "$OUTDIR/dev-ID.$M.jsonl"
+  log "[$M] step 1/3: wrote predictions/dev-ID.$M.jsonl ($(wc -l < "$OUTDIR/dev-ID.$M.jsonl") pairs)"
+
+  # 2. Run the judge (swift). Tiny smoke test first: `head -5 predictions/dev-ID.$M.jsonl > tmp.jsonl`
+  log "[$M] step 2/3: running swift inference (this is the slow part) ..."
+  cd "$SLM/script"
   CUDA_VISIBLE_DEVICES=0 bash inference.sh \
       "$CKPT" \
-      "$HERE/dev-ID.$M.jsonl" \
-      "$HERE/dev-ID.$M.results.jsonl"
+      "$OUTDIR/dev-ID.$M.jsonl" \
+      "$OUTDIR/dev-ID.$M.results.jsonl"
   cd "$HERE"
 
   # swift crashes without a nonzero exit sometimes; make failures loud.
-  if [ ! -s "dev-ID.$M.results.jsonl" ]; then
-    echo "ERROR: dev-ID.$M.results.jsonl missing/empty; inference failed. Aborting." >&2
+  if [ ! -s "$OUTDIR/dev-ID.$M.results.jsonl" ]; then
+    log "[$M] ERROR: predictions/dev-ID.$M.results.jsonl missing/empty; inference failed. Aborting."
     exit 1
   fi
+  log "[$M] step 2/3: inference done ($(wc -l < "$OUTDIR/dev-ID.$M.results.jsonl") responses)"
 
   # 3. Results JSONL -> submission CSV with pred_$M column
   #    (--data-root lets it rejoin on the absolute audios paths swift keeps)
-  python swift_to_submission.py --results dev-ID.$M.results.jsonl \
+  log "[$M] step 3/3: parsing responses -> predictions/dev-ID.pred_$M.csv ..."
+  python swift_to_submission.py --results "$OUTDIR/dev-ID.$M.results.jsonl" \
       --orig-csv ../data/dev-ID.csv --data-root $DATA_ROOT \
-      --target-metric $M --out dev-ID.pred_$M.csv
+      --target-metric $M --out "$OUTDIR/dev-ID.pred_$M.csv"
+  log "[$M] step 3/3: wrote predictions/dev-ID.pred_$M.csv"
 done
 
 # 4. Score (dev-ID/dev-OOD carry labels; official dev.csv does not)
-python ../calculate_metrics.py --prediction-csv dev-ID.pred_spk_sim.csv \
+log "==================== step 4/4: scoring ===================="
+python ../calculate_metrics.py --prediction-csv "$OUTDIR/dev-ID.pred_spk_sim.csv" \
     --ground-truth-csv ../data/dev-ID.csv
+
+log "DONE"

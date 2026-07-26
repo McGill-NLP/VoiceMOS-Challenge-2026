@@ -224,4 +224,5 @@ track3/data/VCTK-Corpus
 
 # Others
 dev.ipynb
-SpeechLLM-as-Judges/
+track3/speechllm_judge/SpeechLLM-as-Judges/
+track3/speechllm_judge/logs

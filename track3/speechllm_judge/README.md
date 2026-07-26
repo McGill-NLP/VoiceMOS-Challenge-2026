@@ -1,6 +1,7 @@
 # SpeechLLM-as-Judges → Track 3 (zero-shot judge)
 
-Glue for using [SpeechLLM-as-Judges](../../SpeechLLM-as-Judges) as a zero-shot
+Glue for using [SpeechLLM-as-Judges](SpeechLLM-as-Judges) (the upstream repo,
+vendored into this folder) as a zero-shot
 judge for Track 3 speaker/accent similarity. The pretrained model does free-text
 `CompareEval`; we prompt it for a 1–5 similarity rating (one prompt per target
 metric) and parse the score back into a Track 3 submission CSV.
@@ -9,45 +10,65 @@ metric) and parse the score back into a Track 3 submission CSV.
 > speaker/accent similarity. Treat this as a zero-shot probe and inspect a few
 > raw outputs before trusting the scores.
 
+## Layout
+
+Run everything from this folder (`track3/speechllm_judge/`):
+
+```
+speechllm_judge/
+├── csv_to_swift.py            # Track 3 CSV -> CompareEval JSONL
+├── swift_to_submission.py     # swift results JSONL -> prediction CSV
+├── pipeline-speech-llm.sh     # dev-ID run + scoring (labelled split)
+├── pipeline-eval-codabench.sh # official dev.csv run -> CodaBench submission
+├── SpeechLLM-as-Judges/       # vendored upstream repo + checkpoint/
+├── predictions/               # all generated .jsonl and .csv land here
+└── logs/                      # tee'd run logs
+```
+
 ## Pipeline
 
-Assume `DATA_ROOT=../data/vmc2026_track3_train_phase_distro_v3_syn` and the
-downloaded checkpoint is at `../../SpeechLLM-as-Judges/checkpoint`.
+The two `pipeline-*.sh` scripts run this end to end and write everything to
+`predictions/`. To run it by hand (illustrative — the labelled `dev-ID` split):
 
 ```bash
 module load miniconda/3 && conda activate speecheval
 export DATA_ROOT=../data/vmc2026_track3_train_phase_distro_v3_syn
-CKPT=../../SpeechLLM-as-Judges/checkpoint
+HERE=$(pwd)
+SLM=$HERE/SpeechLLM-as-Judges
+CKPT=$SLM/checkpoint
+OUTDIR=$HERE/predictions
+mkdir -p "$OUTDIR"
 
 # For each metric in {spk_sim, acc_sim}:
 for M in spk_sim acc_sim; do
   # 1. CSV -> CompareEval JSONL (dedups on the wav pair)
   python csv_to_swift.py --data-root $DATA_ROOT --csv-path ../data/dev-ID.csv \
-      --target-metric $M --out dev-ID.$M.jsonl
+      --target-metric $M --out "$OUTDIR/dev-ID.$M.jsonl"
 
-  # 2. Run the judge (swift). Tiny smoke test first: `head -5 dev-ID.$M.jsonl > tmp.jsonl`
-  cd ../../SpeechLLM-as-Judges/script
+  # 2. Run the judge (swift). Smoke test first: `head -5 predictions/dev-ID.$M.jsonl > tmp.jsonl`
+  cd "$SLM/script"
   CUDA_VISIBLE_DEVICES=0 bash inference.sh \
       "$CKPT" \
-      "../../track3/speechllm_judge/dev-ID.$M.jsonl" \
-      "../../track3/speechllm_judge/dev-ID.$M.results.jsonl"
-  cd -
+      "$OUTDIR/dev-ID.$M.jsonl" \
+      "$OUTDIR/dev-ID.$M.results.jsonl"
+  cd "$HERE"
 
   # 3. Results JSONL -> submission CSV with pred_$M column
   #    swift drops custom fields but keeps the absolute `audios` paths, so we
   #    pass --data-root to rejoin results onto the relative CSV wav paths.
-  python swift_to_submission.py --results dev-ID.$M.results.jsonl \
+  python swift_to_submission.py --results "$OUTDIR/dev-ID.$M.results.jsonl" \
       --orig-csv ../data/dev-ID.csv --data-root $DATA_ROOT \
-      --target-metric $M --out dev-ID.pred_$M.csv
+      --target-metric $M --out "$OUTDIR/dev-ID.pred_$M.csv"
 done
 
 # 4. Score (dev-ID/dev-OOD carry labels; official dev.csv does not)
-python ../calculate_metrics.py --prediction-csv dev-ID.pred_spk_sim.csv \
+python ../calculate_metrics.py --prediction-csv "$OUTDIR/dev-ID.pred_spk_sim.csv" \
     --ground-truth-csv ../data/dev-ID.csv
 ```
 
-To score both metrics from one file, merge the `pred_acc_sim` column into the
-`pred_spk_sim` CSV (both are keyed on `wav_a_path,wav_b_path`).
+`pipeline-eval-codabench.sh` runs the same steps on the unlabelled official
+`dev.csv` and merges both metrics into `predictions/dev-eval.pred_submission.csv`
+(both are keyed on `wav_a_path,wav_b_path`).
 
 ## Notes
 
