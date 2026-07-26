@@ -9,6 +9,9 @@
 #   bash pipeline-finetune.sh spk_sim      # just one
 # set -euo pipefail
 module load miniconda/3 && conda activate speecheval
+# swift sft pulls in deepspeed via accelerate; its import needs CUDA_HOME set,
+# so load a CUDA toolkit (inference/zero-shot did not need this).
+module load cudatoolkit/12.6
 
 export DATA_ROOT=../data/vmc2026_track3_train_phase_distro_v3_syn
 TRAIN_CSV=../data/train.csv
@@ -39,7 +42,8 @@ for M in $METRICS; do
   log "[$M] launching swift sft -> $OUT ..."
 
   # 2. LoRA SFT, single GPU, encoder frozen, init from SQ-LLM checkpoint.
-  CUDA_VISIBLE_DEVICES=0 \
+  #    Inherit CUDA_VISIBLE_DEVICES from Slurm (falls back to 0 interactively).
+  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} \
   NPROC_PER_NODE=1 \
   VIDEO_MAX_PIXELS=50178 \
   FPS_MAX_FRAMES=12 \
