@@ -22,14 +22,14 @@ for M in spk_sim acc_sim; do
       --target-metric $M --out "$OUTDIR/dev-ID.$M.jsonl"
   log "[$M] step 1/3: wrote predictions/dev-ID.$M.jsonl ($(wc -l < "$OUTDIR/dev-ID.$M.jsonl") pairs)"
 
-  # 2. Run the judge (swift). Tiny smoke test first: `head -5 predictions/dev-ID.$M.jsonl > tmp.jsonl`
+  # 2. Run the judge (swift, via local infer.sh with repetition_penalty).
+  #    Tiny smoke test first: `head -5 predictions/dev-ID.$M.jsonl > tmp.jsonl`
   log "[$M] step 2/3: running swift inference (this is the slow part) ..."
-  cd "$SLM/script"
-  CUDA_VISIBLE_DEVICES=0 bash inference.sh \
+  rm -f "$OUTDIR/dev-ID.$M.results.jsonl"
+  CUDA_VISIBLE_DEVICES=0 bash infer.sh \
       "$CKPT" \
       "$OUTDIR/dev-ID.$M.jsonl" \
       "$OUTDIR/dev-ID.$M.results.jsonl"
-  cd "$HERE"
 
   # swift crashes without a nonzero exit sometimes; make failures loud.
   if [ ! -s "$OUTDIR/dev-ID.$M.results.jsonl" ]; then

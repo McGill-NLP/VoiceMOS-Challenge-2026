@@ -28,15 +28,14 @@ for M in spk_sim acc_sim; do
       --target-metric $M --out "$OUTDIR/dev-eval.$M.jsonl"
   log "[$M] step 1/3: wrote predictions/dev-eval.$M.jsonl ($(wc -l < "$OUTDIR/dev-eval.$M.jsonl") pairs)"
 
-  # 2. Run the judge (swift). Remove any stale results so it can't append/dup.
+  # 2. Run the judge (swift, via local infer.sh with repetition_penalty).
+  #    Remove any stale results so it can't append/dup.
   log "[$M] step 2/3: running swift inference (slow part) ..."
   rm -f "$OUTDIR/dev-eval.$M.results.jsonl"
-  cd "$SLM/script"
-  CUDA_VISIBLE_DEVICES=0 bash inference.sh \
+  CUDA_VISIBLE_DEVICES=0 bash infer.sh \
       "$CKPT" \
       "$OUTDIR/dev-eval.$M.jsonl" \
       "$OUTDIR/dev-eval.$M.results.jsonl"
-  cd "$HERE"
 
   if [ ! -s "$OUTDIR/dev-eval.$M.results.jsonl" ]; then
     log "[$M] ERROR: predictions/dev-eval.$M.results.jsonl missing/empty; inference failed. Aborting."

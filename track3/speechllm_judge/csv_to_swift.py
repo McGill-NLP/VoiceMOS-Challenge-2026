@@ -22,26 +22,36 @@ import csv
 import json
 import os
 
+# Prompts are shaped after the model's native CompareEval template
+# (see SpeechLLM-as-Judges/example/output.json): a "Sample A: <audio> Sample B:
+# <audio>" prefix, an instruction that drives the <think> block to reason
+# dimension-by-dimension, and a rating on the native "X/5" scale. We explicitly
+# ask it to FILL <think> (empty-think was the zero-shot failure mode) and to end
+# <answer> with a canonical "Score: X" line for robust parsing.
 PROMPTS = {
     "spk_sim": (
         "Sample A: <audio> Sample B: <audio> "
-        "Sample A is a synthetic speech sample and Sample B is a reference "
-        "recording from the target speaker. Judge how similar the SPEAKER "
-        "IDENTITY (voice timbre, vocal characteristics) of Sample A is to "
-        "Sample B, ignoring differences in the spoken content. Reason briefly, "
-        "then on the LAST line output an integer from 1 (clearly a different "
-        "speaker) to 5 (indistinguishable, same speaker) in the exact format "
-        "'Score: X'."
+        "Sample A is synthetic speech; Sample B is a natural reference recording "
+        "from the target speaker. Focus only on SPEAKER IDENTITY — voice timbre, "
+        "pitch range, and vocal characteristics — and ignore the spoken content, "
+        "language, and recording quality. In <think>, compare the two voices "
+        "dimension by dimension (timbre, pitch, vocal tract / resonance, "
+        "breathiness) and rate the speaker similarity as X/5. In <answer>, write "
+        "a one-sentence justification followed by a final line 'Score: X', where "
+        "X is an integer from 1 (clearly a different speaker) to 5 "
+        "(indistinguishable, the same speaker)."
     ),
     "acc_sim": (
         "Sample A: <audio> Sample B: <audio> "
-        "Sample A is a synthetic speech sample and Sample B is a reference "
-        "recording from the target speaker. Judge how similar the ACCENT "
-        "(pronunciation, prosody, regional articulation) of Sample A is to "
-        "Sample B, ignoring differences in the spoken content. Reason briefly, "
-        "then on the LAST line output an integer from 1 (clearly a different "
-        "accent) to 5 (indistinguishable, same accent) in the exact format "
-        "'Score: X'."
+        "Sample A is synthetic speech; Sample B is a natural reference recording "
+        "from the target speaker. Focus only on ACCENT — pronunciation of vowels "
+        "and consonants, prosody, rhythm, and regional articulation — and ignore "
+        "the spoken content, speaker identity, and recording quality. In <think>, "
+        "compare the two accents dimension by dimension (vowels, consonants, "
+        "intonation, rhythm) and rate the accent similarity as X/5. In <answer>, "
+        "write a one-sentence justification followed by a final line 'Score: X', "
+        "where X is an integer from 1 (clearly a different accent) to 5 "
+        "(indistinguishable, the same accent)."
     ),
 }
 

@@ -32,6 +32,11 @@ KEYWORD_SCORES = [
 ]
 
 SCORE_RE = re.compile(r"score\s*[:=]?\s*([1-5])(?:\s*/\s*5)?", re.I)
+# native "X/5" rating (e.g. "accent similarity: 4/5"); used only as a fallback
+# and only within the <answer> block, so per-dimension X/5 lines inside <think>
+# don't leak in.
+FRACTION_RE = re.compile(r"\b([1-5])\s*/\s*5\b")
+ANSWER_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", re.I | re.S)
 
 
 def extract_response(rec):
@@ -46,9 +51,20 @@ def extract_response(rec):
 
 
 def score_from_text(text, default):
-    m = list(SCORE_RE.finditer(text))
-    if m:
-        return int(m[-1].group(1)), "explicit"
+    # Prefer the <answer> block: that's where the model was asked to put the
+    # final "Score: X". Falling back to the whole text catches free-form replies.
+    am = ANSWER_RE.search(text)
+    answer = am.group(1) if am else ""
+
+    for scope in (answer, text):
+        m = list(SCORE_RE.finditer(scope))
+        if m:
+            return int(m[-1].group(1)), "explicit"
+    # native X/5 rating, answer block only (avoid think sub-scores)
+    if answer:
+        m = list(FRACTION_RE.finditer(answer))
+        if m:
+            return int(m[-1].group(1)), "fraction"
     for pat, val in KEYWORD_SCORES:
         if pat.search(text):
             return val, "keyword"
@@ -89,7 +105,7 @@ def main():
 
     # 1. Build pair -> score map from the model outputs.
     scores = {}
-    stats = {"explicit": 0, "keyword": 0, "default": 0, "unkeyed": 0}
+    stats = {"explicit": 0, "fraction": 0, "keyword": 0, "default": 0, "unkeyed": 0}
     with open(args.results, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
