@@ -16,11 +16,87 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-from model import SpeechEncoder, Projection  # reuse the baseline's encoder/head
+from model import SpeechEncoder  # reuse the baseline's encoder only
+
+# Fixed MoE hyperparameters. NOT exposed as CLI flags -- see module docstring
+# for why these must stay in sync with what inference.py implicitly expects.
+MOE_NUM_EXPERTS = 2
+MOE_TOP_K = None  # None = dense (soft) gating over all experts
 
 
 # ----------------------------------------------------------------------------
-# Method 1: listener-bias-aware model
+# Mixture-of-Experts projection head
+# ----------------------------------------------------------------------------
+class MoEProjection(nn.Module):
+    """
+    Drop-in replacement for a single-MLP projection head: mixes several small
+    expert MLPs via a learned gate instead of using one global MLP. Dense
+    (softmax) gating by default -- more stable than sparse top-k routing on
+    a small train set, where top-k risks expert collapse (gate always picks
+    the same 1-2 experts, others never get gradient). A load-balancing
+    auxiliary loss further discourages collapse.
+    """
+
+    def __init__(
+        self,
+        in_dim: int,
+        hidden_dim: int,
+        num_experts: int = 4,
+        top_k: int = None,
+        activation=nn.ReLU,
+        range_clipping: bool = True,
+        expert_dropout: float = 0.3,
+    ):
+        super().__init__()
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.range_clipping = range_clipping
+        if range_clipping:
+            self.out_act = nn.Tanh()
+
+        self.experts = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Linear(in_dim, hidden_dim),
+                    activation(),
+                    nn.Dropout(expert_dropout),
+                    nn.Linear(hidden_dim, 1),
+                )
+                for _ in range(num_experts)
+            ]
+        )
+        self.gate = nn.Linear(in_dim, num_experts)
+
+    def _load_balance_loss(self, gate_weights):
+        # Encourages uniform average usage across experts over the batch.
+        importance = gate_weights.mean(dim=0)  # [E]
+        target = 1.0 / self.num_experts
+        return ((importance - target) ** 2).sum() * self.num_experts
+
+    def forward(self, x):
+        gate_logits = self.gate(x)  # [B, E]
+        expert_outs = torch.cat([e(x) for e in self.experts], dim=-1)  # [B, E]
+
+        if self.top_k is None or self.top_k >= self.num_experts:
+            gate_weights = F.softmax(gate_logits, dim=-1)
+            combined = (gate_weights * expert_outs).sum(dim=-1)
+            aux_loss = self._load_balance_loss(gate_weights)
+        else:
+            topk_vals, topk_idx = gate_logits.topk(self.top_k, dim=-1)
+            topk_weights = F.softmax(topk_vals, dim=-1)
+            gathered = torch.gather(expert_outs, 1, topk_idx)
+            combined = (topk_weights * gathered).sum(dim=-1)
+            full_gate_weights = F.softmax(gate_logits, dim=-1)
+            aux_loss = self._load_balance_loss(full_gate_weights)
+
+        if self.range_clipping:
+            combined = self.out_act(combined) * 2.0 + 3
+
+        return combined, aux_loss
+
+
+# ----------------------------------------------------------------------------
+# Model: listener-bias-aware + MoE mean head
 # ----------------------------------------------------------------------------
 class ModelV2(nn.Module):
     def __init__(
@@ -44,18 +120,20 @@ class ModelV2(nn.Module):
         self.use_listener_bias = use_listener_bias
         self.listener_dropout = listener_dropout
 
-        # listener-independent "mean quality" head (this is what we submit)
+        # listener-independent "mean quality" head -- now always a MoE head
         self.mean_heads = nn.ModuleDict(
             {
-                m: Projection(interaction_dim, mlp_dnn_dim, activation=nn.ReLU,
-                               range_clipping=mlp_range_clipping)
+                m: MoEProjection(
+                    interaction_dim, mlp_dnn_dim,
+                    num_experts=MOE_NUM_EXPERTS, top_k=MOE_TOP_K,
+                    activation=nn.ReLU, range_clipping=mlp_range_clipping,
+                )
                 for m in self.target_metrics
             }
         )
 
         if use_listener_bias:
             assert num_listeners > 0, "num_listeners must be > 0 when use_listener_bias=True"
-            # index 0 is reserved for "unknown listener" -> used at inference time
             self.listener_emb = nn.Embedding(num_listeners + 1, listener_emb_dim, padding_idx=0)
             self.bias_heads = nn.ModuleDict(
                 {
@@ -81,16 +159,16 @@ class ModelV2(nn.Module):
         )
 
         outputs = {"cos_sim": F.cosine_similarity(emb_a, emb_b, dim=-1)}
+        moe_aux_loss = 0.0
+
         for m in self.target_metrics:
-            mean_pred = self.mean_heads[m](interaction).squeeze(-1)
+            mean_pred, aux_loss = self.mean_heads[m](interaction)
+            moe_aux_loss = moe_aux_loss + aux_loss
             outputs[f"{m}_mean"] = mean_pred
 
             if self.use_listener_bias and listener_idx is not None:
                 l_idx = listener_idx
                 if self.training and self.listener_dropout > 0:
-                    # Randomly force "unknown listener" during training so the
-                    # mean head is trained to carry the full signal in exactly
-                    # the condition it will face at dev/test inference time.
                     drop_mask = torch.rand_like(l_idx.float()) < self.listener_dropout
                     l_idx = l_idx.clone()
                     l_idx[drop_mask] = 0
@@ -101,6 +179,8 @@ class ModelV2(nn.Module):
                 outputs[m] = mean_pred + bias_pred
             else:
                 outputs[m] = mean_pred
+
+        outputs["moe_aux_loss"] = moe_aux_loss
         return outputs
 
 
@@ -113,7 +193,6 @@ class ListenerAwareDataset(Dataset):
         self.target_metrics = target_metrics
         self.augment = augment
 
-        # Pass 1: per-pair per-metric mean (used to supervise the mean head)
         pair_scores = {}
         for row in data_rows:
             key = (row["wav_a_path"], row["wav_b_path"])
@@ -173,8 +252,15 @@ class ListenerAwareDataset(Dataset):
         return item
 
 
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+
 def _augment_waveform(wav, p=0.5):
-    """Method 5: cheap, dependency-free waveform augmentation."""
     if random.random() > p:
         return wav
     choice = random.choice(["noise", "gain", "speed"])
@@ -230,17 +316,7 @@ class CollaterV2:
         return out
 
 
-# ----------------------------------------------------------------------------
-# Method 2: pairwise ranking / contrastive loss
-# ----------------------------------------------------------------------------
 def pairwise_ranking_loss(preds, targets, margin_scale=1.0):
-    """
-    For every pair (i, j) in the batch, penalize predictions whose signed
-    difference is smaller than the true signed difference (scaled by
-    margin_scale). This directly rewards correct relative ordering AND
-    correct relative scale -- exactly what LCC/SRCC measure -- unlike plain
-    MSE, which only cares about absolute per-sample error.
-    """
     diff_pred = preds.unsqueeze(1) - preds.unsqueeze(0)
     diff_true = targets.unsqueeze(1) - targets.unsqueeze(0)
     margin = diff_true.abs() * margin_scale
@@ -259,13 +335,15 @@ def main():
     parser.add_argument("--outdir", required=True, type=str)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--accumulate-steps", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
     parser.add_argument("--train-steps", type=int, default=20000)
     parser.add_argument("--save-steps", type=int, default=5000)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--backbone-lr-mult", type=float, default=0.1,
                          help="Backbone LR = lr * this.")
-    parser.add_argument("--freeze-steps", type=int, default=2000,
-                         help="Steps to keep ECAPA frozen before unfreezing. 0 disables freezing.")
+    parser.add_argument("--freeze-steps", type=int, default=5000,
+                         help="Steps to keep ECAPA frozen before unfreezing. 0 disables freezing. "
+                              "Default 5000 (found to work best).")
     parser.add_argument("--use-listener-bias", action="store_true",
                          help="Enable MBNet-style listener bias correction.")
     parser.add_argument("--listener-dropout", type=float, default=0.5)
@@ -273,6 +351,8 @@ def main():
                          help="Weight of the pairwise ranking/contrastive loss. 0 disables.")
     parser.add_argument("--lambda-mean", type=float, default=1.0,
                          help="Weight of the mean-head MSE loss when --use-listener-bias is set.")
+    parser.add_argument("--lambda-moe-aux", type=float, default=0.01,
+                         help="Weight of the MoE load-balancing auxiliary loss.")
     parser.add_argument("--augment", action="store_true", help="Enable waveform augmentation.")
     parser.add_argument("--verbose", type=int, default=1)
     args = parser.parse_args()
@@ -293,9 +373,12 @@ def main():
 
     dataset = ListenerAwareDataset(args.data_root, train_rows, target_metrics, augment=args.augment)
     collater = CollaterV2(target_metrics)
+    g = torch.Generator()
+    g.manual_seed(args.seed)
     loader = DataLoader(
         dataset, batch_size=args.batch_size, shuffle=True,
         collate_fn=collater, num_workers=4, drop_last=True,
+        generator=g,
     )
 
     num_listeners = len(dataset.listener2idx)
@@ -313,7 +396,6 @@ def main():
         listener_dropout=args.listener_dropout,
     ).to(device)
 
-    # Method 4: discriminative learning rates (backbone vs. heads)
     backbone_params = list(model.encoder.ssl_model.parameters())
     head_params = [p for n, p in model.named_parameters() if not n.startswith("encoder.ssl_model.")]
     optimizer = torch.optim.AdamW(
@@ -361,6 +443,8 @@ def main():
 
                 if args.lambda_rank > 0:
                     loss = loss + args.lambda_rank * pairwise_ranking_loss(outputs[m], raw_target)
+
+            loss = loss + args.lambda_moe_aux * outputs["moe_aux_loss"]
 
             scaled_loss = loss / args.accumulate_steps
             scaled_loss.backward()
