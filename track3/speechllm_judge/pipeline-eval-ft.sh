@@ -1,5 +1,6 @@
 # Evaluate the FINE-TUNED adapters end to end on a Track 3 CSV.
-# Auto-locates the best checkpoint per metric, uses the SAME prompt as training
+# Uses the LATEST checkpoint per metric (USE_BEST=1 for lowest-val-loss instead),
+# uses the SAME prompt as training
 # (csv_to_sft.py --mode infer), runs both metrics, merges into one CSV, and
 # scores it if the CSV carries labels (dev-ID / dev-OOD) — otherwise it's a
 # CodaBench submission (official dev.csv).
@@ -25,34 +26,37 @@ OUT="$OUTDIR/$TAG.ft.pred.csv"
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
-# Best checkpoint for a metric: trainer_state.json's best_model_checkpoint from
-# the newest version dir, else the highest-step checkpoint. Env override wins.
-best_ckpt() {
+# Checkpoint for a metric: the LATEST (highest-step) checkpoint in the newest
+# version dir by default; set USE_BEST=1 to use trainer_state.json's
+# best_model_checkpoint (lowest val loss) instead. Env override always wins.
+resolve_ckpt() {
   local metric=$1
   local override
   override=$(eval echo "\${ADAPTER_$metric:-}")
   if [ -n "$override" ]; then echo "$override"; return; fi
-  python - "$MODELDIR/sft_$metric" <<'PY'
+  python - "$MODELDIR/sft_$metric" "${USE_BEST:-0}" <<'PY'
 import sys, glob, os, json
-mdir = sys.argv[1]
+mdir, use_best = sys.argv[1], sys.argv[2] == "1"
 vers = sorted(glob.glob(os.path.join(mdir, "v*")))
 assert vers, f"no version dir under {mdir}"
 base = vers[-1]
 cks = sorted(glob.glob(os.path.join(base, "checkpoint-*")),
              key=lambda p: int(p.rsplit('-', 1)[-1]))
 assert cks, f"no checkpoints under {base}"
-best = None
-ts = os.path.join(cks[-1], "trainer_state.json")
-if os.path.exists(ts):
-    best = json.load(open(ts)).get("best_model_checkpoint")
-print(best if best and os.path.isdir(best) else cks[-1])
+latest = cks[-1]
+if use_best:
+    ts = os.path.join(latest, "trainer_state.json")
+    best = json.load(open(ts)).get("best_model_checkpoint") if os.path.exists(ts) else None
+    print(best if best and os.path.isdir(best) else latest)
+else:
+    print(latest)
 PY
 }
 
 log "START ft-eval | CSV=$CSV | $(tail -n +2 "$CSV" | wc -l) rows"
 
 for M in spk_sim acc_sim; do
-  ADAPTER=$(best_ckpt "$M")
+  ADAPTER=$(resolve_ckpt "$M")
   log "==================== METRIC: $M ===================="
   log "[$M] adapter: $ADAPTER"
 
