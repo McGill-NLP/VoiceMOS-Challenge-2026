@@ -217,6 +217,16 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Others
+# Data
 track3/data/vmc2026_track3_train_phase_distro_v3_syn
 track3/data/vmc2026_track3_train_phase_distro_v3_vctk
+track3/data/VCTK-Corpus
+track3/corn-and-coral/data
+
+# Checkpoints
+track3/speechllm_judge/models
+
+# Others
+dev.ipynb
+track3/speechllm_judge/SpeechLLM-as-Judges/
+track3/speechllm_judge/logs
