@@ -1,0 +1,4 @@
+egs/
+*.pt
+__pycache__/
+*.out

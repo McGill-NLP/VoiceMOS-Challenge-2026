@@ -222,6 +222,7 @@ track3/data/vmc2026_track3_train_phase_distro_v3_syn
 track3/data/vmc2026_track3_train_phase_distro_v3_vctk
 track3/data/VCTK-Corpus
 track3/corn-and-coral/data
+track3/baseline/data
 
 # Checkpoints
 track3/speechllm_judge/models
@@ -230,3 +231,5 @@ track3/speechllm_judge/models
 dev.ipynb
 track3/speechllm_judge/SpeechLLM-as-Judges/
 track3/speechllm_judge/logs
+track3/papers
+*.out
