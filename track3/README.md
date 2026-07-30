@@ -1,19 +1,17 @@
-# VoiceMOS Challenge 2026 - Track 3
+### 260728-v1 using v1 code but with "--lambda-moe-aux", type=float, default=0.05,
+uv run python finetune.py --data-root /home/mila/j/jeony/scratch/voicemos/data/vmc2026_track3_train_phase_distro_v3_syn --target-metric spk_sim \
+    --seed 47 --freeze-steps 5000 --wean-max-alpha 1.0 \
+    --outdir /home/mila/j/jeony/scratch/voicemos_v2/track3/260728_code/egs/submissions/260728-v1-dual_encoder_wean_spk_sim
 
-Our experiments for Track 3: predicting speaker and accent similarity between a synthetic sample and a reference. For the official baseline system, see [BASELINES.md](BASELINES.md).
+uv run python inference.py \
+    --data-root /home/mila/j/jeony/scratch/voicemos/data/vmc2026_track3_train_phase_distro_v3_syn \
+    --csv-path /home/mila/j/jeony/scratch/voicemos/data/vmc2026_track3_train_phase_distro_v3_syn/sets/dev.csv \
+    --checkpoint home/mila/j/jeony/scratch/voicemos_v2/track3/260728_code/egs/submissions/260728-v1-dual_encoder_wean_acc_sim/model_v2_final.pt \
+    --target-metric acc_sim \
+    --out home/mila/j/jeony/scratch/voicemos_v2/track3/260728_code/egs/submissions/260728-v1-dual_encoder_wean_acc_sim/answer.txt
 
-## Data splits
 
-The official dev set ships without labels (they will be released on July 31), so we create our own evaluation splits from the labelled `sets/train.csv` to measure generalization to **unseen systems and listeners**. [build_splits.py](build_splits.py) writes three files to `data/`:
-
-- `train.csv` — seen systems/listeners (~75%)
-- `dev-ID.csv` — In-Distribution: same systems/listeners, held-out cells (~8%)
-- `dev-OOD.csv` — Out-of-Distribution: held-out systems and/or listeners (~17%)
-
-Splitting is at the `(system_id, listener_id)` level, so no cell straddles splits.
-
-```bash
-python build_splits.py
-```
-
-## Models
+{
+    "TRACK3_SPK_UTT_SRCC": 0.4812781689830857,
+    "TRACK3_ACC_UTT_SRCC": 0.5021186275218261
+}
