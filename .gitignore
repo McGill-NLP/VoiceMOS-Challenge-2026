@@ -226,6 +226,7 @@ track3/baseline/data
 
 # Checkpoints
 track3/speechllm_judge/models
+track3/encoders/**/*.pt
 
 # Others
 dev.ipynb
