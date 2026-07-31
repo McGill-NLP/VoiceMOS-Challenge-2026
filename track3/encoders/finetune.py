@@ -20,21 +20,27 @@ import argparse
 import csv
 import logging
 import os
+from collections import defaultdict
 
+import numpy as np
 import torch
 import torchaudio
 from torch.utils.data import DataLoader, Dataset
 from torch.nn.utils.rnn import pad_sequence
 from tqdm import tqdm
 
+from calculate_metrics import compute_metrics
 from encoders import ENCODER_REGISTRY
 from model import Model
 
 
 class SimilarityDataset(Dataset):
-    def __init__(self, data_root, data_rows, target_metric):
+    def __init__(self, data_root, data_rows, target_metric, keep_system_id=False):
         self.data_root = data_root
         self.target_metric = target_metric
+        # System-level metrics need the system_id to survive collation. Off during
+        # training, where it is unused.
+        self.keep_system_id = keep_system_id
 
         # Aggregate scores by unique audio pairs
         aggregated_data = {}
@@ -80,11 +86,14 @@ class SimilarityDataset(Dataset):
         target = float(row[self.target_metric])
 
         # Return a dictionary. The collater will dynamically pack the target_metric.
-        return {
+        item = {
             "wav_a": wav_a.squeeze(0),
             "wav_b": wav_b.squeeze(0),
             self.target_metric: target
         }
+        if self.keep_system_id and "system_id" in row:
+            item["system_id"] = row["system_id"]
+        return item
 
 
 class SimilarityCollater:
@@ -158,6 +167,72 @@ def save_checkpoint(path, model, config):
     torch.save({"config": config, "state_dict": model.state_dict()}, path)
 
 
+# Metric keys reported by evaluate(), in display order. "sys" variants average predictions
+# and targets per system first, which is what the challenge's system-level scores do.
+METRIC_KEYS = ["mse_utt", "lcc_utt", "srcc_utt", "mse_sys", "lcc_sys", "srcc_sys"]
+
+
+@torch.no_grad()
+def evaluate(model, loader, target_metric, device):
+    """Run the model over a labelled dev set and return utterance- and system-level scores.
+
+    Restores the model's previous train/eval mode on the way out so the training loop is
+    unaffected. Uses the same compute_metrics as calculate_metrics.py.
+
+    Note on batching: this runs batched, so the collater pads every clip in a batch up to
+    the longest one. inference.py runs one pair at a time with no padding, so the two paths
+    can disagree slightly. Utterance-level scores track closely (measured: srcc_utt 0.1691
+    vs 0.1696 for the same checkpoint), but system-level SRCC is a rank statistic over only
+    ~23 systems, so a hair of numerical difference can swap two adjacent systems and move it
+    by ~0.01 (measured: srcc_sys 0.4308 batched vs 0.4407 unbatched). Treat the in-training
+    curve as the monitoring signal and a standalone inference.py + calculate_metrics.py run
+    as the number of record. --eval-batch-size 1 makes them agree exactly, at ~15x the cost.
+    """
+    was_training = model.training
+    model.eval()
+
+    preds, targets, system_ids = [], [], []
+    for batch in loader:
+        outputs = model(
+            batch["wav_a"].to(device),
+            batch["wav_b"].to(device),
+            batch["wav_a_lengths"].to(device),
+            batch["wav_b_lengths"].to(device),
+        )
+        preds.extend(outputs[target_metric].detach().cpu().tolist())
+        targets.extend(batch[target_metric].tolist())
+        system_ids.extend(batch.get("system_ids", [None] * len(batch[target_metric])))
+
+    if was_training:
+        model.train()
+
+    utt_true = np.array(targets)
+    utt_pred = np.array(preds)
+    # Cast to plain floats: compute_metrics returns numpy scalars, and those end up in the
+    # checkpoint config, where torch.load's weights_only=True default refuses to unpickle
+    # numpy._core.multiarray.scalar.
+    results = {k: float(v) for k, v in zip(METRIC_KEYS[:3], compute_metrics(utt_true, utt_pred))}
+
+    if any(s is not None for s in system_ids):
+        sys_true, sys_pred = defaultdict(list), defaultdict(list)
+        for sid, t, p in zip(system_ids, targets, preds):
+            sys_true[sid].append(t)
+            sys_pred[sid].append(p)
+        results.update({k: float(v) for k, v in zip(METRIC_KEYS[3:], compute_metrics(
+            np.array([np.mean(sys_true[s]) for s in sys_true]),
+            np.array([np.mean(sys_pred[s]) for s in sys_true]),
+        ))})
+        results["n_systems"] = len(sys_true)
+
+    results["n_pairs"] = len(utt_true)
+    return results
+
+
+def format_metrics(results):
+    parts = [f"{k}={results[k]:.4f}" for k in METRIC_KEYS if k in results]
+    return "  ".join(parts)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune Baseline for VoiceMOS 2026 Track 3.")
     parser.add_argument("--data-root", required=True, type=str, help="Root directory of the dataset distribution.")
@@ -169,6 +244,11 @@ def main():
     parser.add_argument("--cache-dir", type=str, default=None, help="Where to cache downloaded encoder weights.")
     parser.add_argument("--freeze-encoder", action="store_true", help="Train only the projection head and MLP head.")
     parser.add_argument("--encoder-lr", type=float, default=None, help="Learning rate for the pretrained backbone. Defaults to --lr.")
+    parser.add_argument("--dev-csv", type=str, default=None, help="Labelled dev CSV. If given, it is scored periodically during training.")
+    parser.add_argument("--dev-data-root", type=str, default=None, help="Data root for --dev-csv. Defaults to --data-root.")
+    parser.add_argument("--eval-steps", type=int, default=500, help="Evaluate --dev-csv every N optimizer steps.")
+    parser.add_argument("--eval-batch-size", type=int, default=16, help="Batch size for dev evaluation. Use 1 to match inference.py exactly (see evaluate()).")
+    parser.add_argument("--best-metric", type=str, default="srcc_sys", choices=METRIC_KEYS, help="Dev metric used to keep model_best.pt.")
     parser.add_argument("--batch-size", type=int, default=16, help="Training batch size.")
     parser.add_argument("--accumulate-steps", type=int, default=1, help="Number of gradient accumulation steps.")
     parser.add_argument("--train-steps", type=int, default=20000, help="Total number of training steps.")
@@ -210,6 +290,33 @@ def main():
         num_workers=args.num_workers,
         drop_last=True
     )
+
+    # 1b. Dev set for in-training evaluation
+    dev_loader = None
+    if args.dev_csv:
+        dev_root = args.dev_data_root or args.data_root
+        logging.info(f"Loading dev set {args.dev_csv} (data root {dev_root})...")
+        with open(args.dev_csv, 'r', encoding='utf-8') as f:
+            dev_data = list(csv.DictReader(f))
+        if args.target_metric not in (dev_data[0] if dev_data else {}):
+            raise SystemExit(
+                f"{args.dev_csv} has no '{args.target_metric}' column; it must be a labelled dev set."
+            )
+        # keep_system_id=True so system-level metrics can be computed. The aggregation is a
+        # no-op when the CSV is already one row per pair, and averages it when it is not.
+        dev_dataset = SimilarityDataset(dev_root, dev_data, args.target_metric, keep_system_id=True)
+        dev_loader = DataLoader(
+            dev_dataset,
+            batch_size=args.eval_batch_size,
+            shuffle=False,
+            collate_fn=collater,
+            num_workers=args.num_workers,
+            drop_last=False,
+        )
+        logging.info(
+            f"Dev evaluation every {args.eval_steps} steps on {len(dev_dataset)} pairs; "
+            f"model_best.pt tracks {args.best_metric}."
+        )
 
     # 2. Model Initialization
     logging.info(f"Initializing Model for {args.target_metric} prediction with encoder '{args.encoder}'...")
@@ -256,8 +363,50 @@ def main():
     forward_steps = 0
     train_loss = 0.0
 
+    # Dev history, so the run can be plotted or grepped afterwards rather than only read
+    # off the log. One row per evaluation.
+    log_path = os.path.join(args.outdir, f"dev_log_{args.target_metric}.csv")
+    log_file = None
+    best_score = None
+    if dev_loader is not None:
+        log_file = open(log_path, "w", newline="", encoding="utf-8")
+        log_writer = csv.writer(log_file)
+        log_writer.writerow(["step", "train_mse"] + METRIC_KEYS)
+
+    def run_eval(step, recent_loss, track_best=True):
+        nonlocal best_score
+        results = evaluate(model, dev_loader, args.target_metric, device)
+        logging.info(f"[dev @ step {step}] {format_metrics(results)}")
+        log_writer.writerow(
+            [step, f"{recent_loss:.6f}"] + [f"{results.get(k, float('nan')):.6f}" for k in METRIC_KEYS]
+        )
+        log_file.flush()
+
+        # MSE is better when lower; the correlations are better when higher.
+        score = results.get(args.best_metric)
+        if track_best and score is not None and not np.isnan(score):
+            improved = (
+                best_score is None
+                or (score < best_score if args.best_metric.startswith("mse") else score > best_score)
+            )
+            if improved:
+                best_score = score
+                save_checkpoint(
+                    os.path.join(args.outdir, f"model_best_{args.target_metric}.pt"),
+                    model,
+                    {**config, "best_metric": args.best_metric, "best_score": score, "best_step": step},
+                )
+                logging.info(f"[dev @ step {step}] new best {args.best_metric}={score:.4f}, saved model_best.")
+        return results
+
     optimizer.zero_grad()
     pbar = tqdm(total=args.train_steps, desc="Training")
+
+    if dev_loader is not None:
+        # Step 0 is the untrained-head reference point every later number is read against.
+        # Excluded from best-checkpoint tracking: a randomly initialised head can score well
+        # by chance, and shipping it would be meaningless.
+        run_eval(0, float("nan"), track_best=False)
 
     while global_step < args.train_steps:
         for batch in train_loader:
@@ -290,7 +439,8 @@ def main():
                 pbar.update(1)
 
                 # Update progress bar description every step
-                pbar.set_postfix({"MSE": f"{train_loss / args.accumulate_steps:.4f}"})
+                recent_loss = train_loss / args.accumulate_steps
+                pbar.set_postfix({"MSE": f"{recent_loss:.4f}"})
                 train_loss = 0.0
 
                 # Save checkpoint every N steps
@@ -299,12 +449,31 @@ def main():
                     save_checkpoint(save_path, model, config)
                     logging.info(f"Checkpoint saved to {save_path}")
 
+                # Score the dev set every N steps
+                if dev_loader is not None and global_step % args.eval_steps == 0:
+                    results = run_eval(global_step, recent_loss)
+                    pbar.set_postfix({
+                        "MSE": f"{recent_loss:.4f}",
+                        args.best_metric: f"{results.get(args.best_metric, float('nan')):.4f}",
+                    })
+
     pbar.close()
 
     # 5. Save Final Model
     save_path = os.path.join(args.outdir, f"finetuned_model_{args.target_metric}_final.pt")
     save_checkpoint(save_path, model, config)
     logging.info(f"Training complete. Final model saved to {save_path}")
+
+    # 6. Final dev evaluation, unless the last step already ran one
+    if dev_loader is not None:
+        if global_step % args.eval_steps != 0:
+            run_eval(global_step, float("nan"))
+        logging.info(f"Dev history written to {log_path}")
+        logging.info(
+            f"Best {args.best_metric} = {best_score:.4f} "
+            f"(model_best_{args.target_metric}.pt); final-step model is {os.path.basename(save_path)}."
+        )
+        log_file.close()
 
 if __name__ == "__main__":
     main()

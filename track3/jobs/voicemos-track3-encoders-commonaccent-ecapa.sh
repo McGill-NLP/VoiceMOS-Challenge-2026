@@ -25,9 +25,13 @@
 #   ftlr1e-5   real fine-tuning, backbone lr 1e-5, head lr 1e-3
 #   ftlr1e-4   real fine-tuning, backbone lr 1e-4, head lr 1e-3
 #
-# Training uses the complete official sets/train.csv. Every run predicts the official
-# sets/dev.csv, and is scored against the dev labels automatically once those are released
-# (drop them at $DR/sets/dev_with_labels.csv, or point DEV_LABELS at them).
+# Training uses the complete official sets/train.csv. The labelled dev set is scored
+# throughout training (every FT_EVAL_STEPS / FROZEN_EVAL_STEPS optimizer steps), so progress
+# is visible in the log as it happens rather than only at the end. Each run writes:
+#
+#   dev_log_<metric>.csv       step, train_mse, and UTT/SYS MSE-LCC-SRCC per evaluation
+#   model_best_<metric>.pt     checkpoint with the best dev BEST_METRIC seen
+#   dev_<metric>.csv           predictions from that checkpoint, in submission format
 #
 #   sbatch track3/jobs/voicemos-track3-encoders-commonaccent-ecapa.sh
 #
@@ -109,10 +113,20 @@ else
     RUN_TAG=full
 fi
 
-# The official dev set ships unlabelled and the labels are released mid-challenge. As soon
-# as the labelled CSV exists at this path, every run is scored against it automatically.
-# Override if it lands under a different name: --export=ALL,DEV_LABELS=/path/to/it
-DEV_LABELS=${DEV_LABELS:-$DR/sets/dev_with_labels.csv}
+# Labelled dev set, from the evaluation-phase distribution. Its wav paths resolve against
+# the TRAINING distro: the eval distro is missing all 600 sys019 reference wavs (they ship
+# separately with VCTK), while the train distro has every dev wav. Hence --dev-data-root=$DR.
+DEV_LABELS=${DEV_LABELS:-../baseline/data/vmc2026_track3_eval_phase_distro_v3_syn/sets/dev_with_labels.csv}
+
+# The dev set is scored every EVAL_STEPS optimizer steps during training, so the run can be
+# watched rather than only judged at the end. Each evaluation is 600 pairs. Roughly 40
+# points across a frozen run and 16 across a fine-tuning run.
+FROZEN_EVAL_STEPS=${FROZEN_EVAL_STEPS:-500}
+FT_EVAL_STEPS=${FT_EVAL_STEPS:-250}
+
+# Dev metric that decides which checkpoint is kept as model_best_<metric>.pt.
+# System-level SRCC is the headline number for the challenge.
+BEST_METRIC=${BEST_METRIC:-srcc_sys}
 
 # ECAPA is 1D over time, so it is far lighter than the 2D ERes2NetV2 and the baseline's
 # batch size of 16 fits with no accumulation. Measured on an L40S (46 GB):
@@ -159,17 +173,22 @@ for SET in "${EVAL_SETS[@]}"; do
         || { echo "ERROR: could not build ground truth for $SET"; exit 1; }
 done
 
+# dev_with_labels.csv is already one row per pair, but run it through make_eval_gt.py
+# anyway: the pass-through is a no-op and it keeps working if a listener-wise version is
+# ever released.
 DEV_GT=""
 if [ -f "$DEV_LABELS" ]; then
     if python make_eval_gt.py --in "$DEV_LABELS" --out egs/dev.mean.csv; then
         DEV_GT=egs/dev.mean.csv
-        echo "Official dev labels found: every run will be scored against $DEV_LABELS"
+        echo "Dev labels: $DEV_LABELS"
+        echo "  -> scored every EVAL_STEPS during training, and again after it"
     else
         echo "WARNING: $DEV_LABELS exists but could not be parsed; dev will not be scored."
     fi
 else
-    echo "No labelled dev set at $DEV_LABELS yet."
-    echo "Dev predictions will be written for CodaBench but not scored locally."
+    echo "ERROR: no labelled dev set at $DEV_LABELS"
+    echo "Training would run blind. Fix the path or pass --export=ALL,DEV_LABELS=..."
+    exit 1
 fi
 
 ##################################################################
@@ -189,31 +208,39 @@ for CONFIG in "${CONFIGS[@]}"; do
         frozen)
             TRAIN_ARGS=(--freeze-encoder --lr "$HEAD_LR"
                         --batch-size "$FROZEN_BATCH" --accumulate-steps "$FROZEN_ACCUM"
-                        --train-steps "$FROZEN_STEPS")
+                        --train-steps "$FROZEN_STEPS" --eval-steps "$FROZEN_EVAL_STEPS")
             ;;
         ftlr1e-5)
             TRAIN_ARGS=(--encoder-lr 1e-5 --lr "$HEAD_LR"
                         --batch-size "$BATCH" --accumulate-steps "$ACCUM"
-                        --train-steps "$FT_STEPS")
+                        --train-steps "$FT_STEPS" --eval-steps "$FT_EVAL_STEPS")
             ;;
         ftlr1e-4)
             TRAIN_ARGS=(--encoder-lr 1e-4 --lr "$HEAD_LR"
                         --batch-size "$BATCH" --accumulate-steps "$ACCUM"
-                        --train-steps "$FT_STEPS")
+                        --train-steps "$FT_STEPS" --eval-steps "$FT_EVAL_STEPS")
             ;;
         *)
             echo "Unknown config $CONFIG"; FAILED+=("$TAG:config"); continue ;;
     esac
 
-    echo "--- fine-tuning ---"
+    echo "--- fine-tuning (dev scored during training) ---"
     python finetune.py \
         --data-root "$DR" --train-csv "$TRAIN_CSV" \
         --target-metric "$METRIC" --encoder "$ENCODER" --outdir "$OUT" \
         "${TRAIN_ARGS[@]}" --save-steps "$SAVE_STEPS" \
+        --dev-csv "$DEV_LABELS" --dev-data-root "$DR" \
+        --eval-batch-size "$FROZEN_BATCH" --best-metric "$BEST_METRIC" \
         --num-workers "$NUM_WORKERS"
     if [ $? -ne 0 ]; then echo "TRAINING FAILED for $TAG"; FAILED+=("$TAG:train"); continue; fi
 
-    CKPT="$OUT/finetuned_model_${METRIC}_final.pt"
+    # Prefer the checkpoint selected on dev over the last-step one.
+    CKPT="$OUT/model_best_${METRIC}.pt"
+    if [ ! -f "$CKPT" ]; then
+        echo "NOTE: no model_best_${METRIC}.pt, falling back to the final-step checkpoint."
+        CKPT="$OUT/finetuned_model_${METRIC}_final.pt"
+    fi
+    echo "Selected checkpoint: $CKPT"
 
     # Local held-out evaluation. Encoder and target metric are read from the checkpoint.
     for SET in "${EVAL_SETS[@]}"; do
@@ -228,7 +255,10 @@ for CONFIG in "${CONFIGS[@]}"; do
             --ground-truth-csv "egs/$SET.mean.csv"
     done
 
-    echo "--- inference on the official dev set ---"
+    echo "--- inference on the official dev set with the selected checkpoint ---"
+    # Clear any output from a previous run first, so a failure here cannot leave a stale
+    # CSV that the summary would then report as OK.
+    rm -f "$OUT/dev_${METRIC}.csv"
     python inference.py \
         --data-root "$DR" --csv-path "$DEV_CSV" \
         --checkpoint "$CKPT" --out "$OUT/dev_${METRIC}.csv"
@@ -259,11 +289,28 @@ for CONFIG in "${CONFIGS[@]}"; do
 done
 done
 echo ""
-if [ -n "$DEV_GT" ] || [ ${#EVAL_SETS[@]} -gt 0 ]; then
-    echo "Scores are in the per-run blocks above; grep this log for 'Results for'."
-else
-    echo "No labels were available, so nothing was scored locally."
-fi
+echo "Best dev $BEST_METRIC per run:"
+for METRIC in "${METRICS[@]}"; do
+for CONFIG in "${CONFIGS[@]}"; do
+    L="egs/${ENCODER}_${METRIC}_${CONFIG}_${RUN_TAG}/dev_log_${METRIC}.csv"
+    if [ -f "$L" ]; then
+        python - "$L" "$BEST_METRIC" "${METRIC}/${CONFIG}" <<'PY'
+import csv, sys, math
+path, metric, tag = sys.argv[1], sys.argv[2], sys.argv[3]
+rows = [r for r in csv.DictReader(open(path)) if int(r["step"]) > 0]
+vals = [(float(r[metric]), int(r["step"])) for r in rows if r[metric] and not math.isnan(float(r[metric]))]
+if vals:
+    best, step = (min if metric.startswith("mse") else max)(vals)
+    last = vals[-1][0]
+    print(f"  {tag:24s} best {best:+.4f} @ step {step:<6d} final {last:+.4f}")
+else:
+    print(f"  {tag:24s} no evaluations recorded")
+PY
+    fi
+done
+done
+echo ""
+echo "Full dev curves: egs/*/dev_log_*.csv   (also grep this log for '[dev @')"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo "Failures: ${FAILED[*]}"
 fi

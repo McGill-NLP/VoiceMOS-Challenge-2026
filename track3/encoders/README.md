@@ -111,15 +111,52 @@ sbatch track3/jobs/voicemos-track3-encoders-commonaccent-ecapa.sh  # ~2 h
 ```
 
 Each trains `{spk_sim, acc_sim} × {frozen, encoder-lr 1e-5, encoder-lr 1e-4}` on the **complete
-official `sets/train.csv`** and writes predictions for the official `sets/dev.csv`.
+official `sets/train.csv`**, scoring the labelled dev set throughout training.
 
-Model selection is against the official dev labels. They ship later in the challenge, so the
-scripts check for them at `$DR/sets/dev_with_labels.csv` on every run: when the file is absent they
-say so and only write submission CSVs, and as soon as it exists each run is scored automatically
-with no edit needed. Point elsewhere with `--export=ALL,DEV_LABELS=/path/to/labels.csv`. The labels
-are aggregated to per-pair means first, so a listener-wise release works unchanged.
+### Watching a run
 
-For a held-out read before the labels land, train on the local 75% split and evaluate on
+The labelled dev set (`vmc2026_track3_eval_phase_distro_v3_syn/sets/dev_with_labels.csv`, 600
+pairs, 23 systems) is scored every `--eval-steps` optimizer steps, so a run reports as it goes:
+
+```
+[dev @ step 1500] mse_utt=0.5198 lcc_utt=0.2693 srcc_utt=0.2721 mse_sys=0.2547 lcc_sys=0.6597 srcc_sys=0.5484
+[dev @ step 1500] new best srcc_sys=0.5484, saved model_best.
+```
+
+Each run writes into its `egs/<tag>/` directory:
+
+| File | Contents |
+|---|---|
+| `dev_log_<metric>.csv` | one row per evaluation: `step, train_mse`, then all six dev metrics |
+| `model_best_<metric>.pt` | checkpoint with the best dev `--best-metric` (default `srcc_sys`) |
+| `dev_<metric>.csv` | predictions from that checkpoint, submission format |
+
+A step-0 evaluation runs before training as the reference point, but is excluded from
+best-checkpoint tracking — a randomly initialised head can score well by chance.
+
+The dev wavs resolve against the **training** distro: the eval distro ships without the 600
+`sys019` reference wavs (they come with VCTK separately), while the train distro has every dev
+wav. Hence `--dev-data-root $DR` in the job scripts.
+
+**In-training scores are a monitoring signal, not the number of record.** Evaluation runs batched,
+so the collater pads each clip to the batch maximum, while `inference.py` runs unpadded at batch
+size 1. Utterance-level metrics track closely (measured `srcc_utt` 0.1691 vs 0.1696 on one
+checkpoint), but system-level SRCC ranks only ~23 systems, so a hair of numerical difference can
+swap two adjacent ones and shift it by ~0.01 (`srcc_sys` 0.4308 batched vs 0.4407 unbatched). The
+scripts therefore re-score the selected checkpoint with `inference.py` + `calculate_metrics.py`
+after training, and that is the number to quote. `--eval-batch-size 1` makes the two agree exactly,
+at roughly 15× the evaluation cost.
+
+### Standalone
+
+```bash
+python finetune.py --data-root $DR --train-csv $DR/sets/train.csv \
+    --target-metric spk_sim --encoder eres2netv2 --encoder-lr 1e-5 --outdir egs/run \
+    --dev-csv $EVAL_DR/sets/dev_with_labels.csv --dev-data-root $DR \
+    --eval-steps 250 --best-metric srcc_sys
+```
+
+For a held-out read on unseen systems and listeners, train on the local 75% split and evaluate on
 `dev-ID` / `dev-OOD` instead:
 
 ```bash
