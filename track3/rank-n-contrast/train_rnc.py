@@ -41,14 +41,18 @@ def parse_args():
 
     p.add_argument("--batch-size", type=int, default=64,
                    help="RNC benefits monotonically from more in-batch positives "
-                        "(paper Table 6a); raise this as far as memory allows.")
+                        "(paper Table 6a); raise this as far as memory allows. "
+                        "With ECAPA training, measured peaks on a 46 GiB L40S are "
+                        "22.3 GiB at 64 and 31.6 GiB at 96, both with "
+                        "--max-audio-sec 6; without a crop, peak follows the "
+                        "longest clip in the batch and 64 already reaches 36.6 GiB.")
     p.add_argument("--train-steps", type=int, default=13000)
     p.add_argument("--save-steps", type=int, default=1000)
     p.add_argument("--eval-steps", type=int, default=500)
-    p.add_argument("--lr", type=float, default=1e-3,
-                   help="Baseline's AdamW learning rate, kept for parity. Likely "
-                        "too high for a contrastive objective on a pretrained "
-                        "encoder -- first knob to tune.")
+    p.add_argument("--lr", type=float, default=1e-5,
+                   help="AdamW learning rate for the 22.15M-parameter ECAPA "
+                        "backbone. The baseline's 1e-3 was calibrated for a 49k "
+                        "projection on a frozen encoder and is far too high here.")
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--lr-schedule", choices=["cosine", "none"], default="cosine",
                    help="The paper uses cosine annealing; the baseline uses none.")
@@ -60,12 +64,16 @@ def parse_args():
     p.add_argument("--label-diff", choices=["l1", "l2"], default="l1")
 
     p.add_argument("--model-name", default=ECAPA)
+    p.add_argument("--freeze-ecapa", action="store_true",
+                   help="Freeze the 22.15M ECAPA parameters, leaving RNC only the "
+                        "49k projection to shape. This is an ABLATION, not the "
+                        "default: with ECAPA frozen the contrastive objective has "
+                        "almost nothing to act on and stage 1 barely moves (the "
+                        "first sweep lost 0.07 nats over 8,750 steps). Stage 2 is "
+                        "where the baseline's frozen-ECAPA behaviour is reproduced.")
     p.add_argument("--unfreeze-ecapa", action="store_true",
-                   help="Genuinely fine-tune the 22.15M ECAPA parameters. Off by "
-                        "default because the official baseline -- despite its "
-                        "'Fine-tuning everything' comment -- leaves ECAPA frozen "
-                        "(SpeechBrain's freeze_params defaults to True) and trains "
-                        "only the projection and head.")
+                   help=argparse.SUPPRESS)  # deprecated: now the default, kept so
+                                            # existing commands keep working
     p.add_argument("--ecapa-eval-mode", action="store_true",
                    help="Pin ECAPA to eval() so its BatchNorm running statistics "
                         "stop drifting. The baseline lets them drift.")
@@ -150,10 +158,14 @@ def main():
             max_audio_sec=args.max_audio_sec, train=False,
         )
 
+    if args.unfreeze_ecapa:
+        logging.warning("--unfreeze-ecapa is deprecated and now a no-op: stage 1 "
+                        "fine-tunes ECAPA by default. Use --freeze-ecapa to opt out.")
+
     encoder = PairEncoder(
         model_name=args.model_name,
         use_projection=True,
-        freeze_ecapa=not args.unfreeze_ecapa,
+        freeze_ecapa=args.freeze_ecapa,
         ecapa_eval_mode=args.ecapa_eval_mode,
     ).to(device)
     criterion = RnCLoss(
@@ -166,7 +178,7 @@ def main():
     n_total = sum(p.numel() for p in encoder.parameters())
     logging.info(
         f"Trainable parameters: {n_train:,} / {n_total:,} ({100 * n_train / n_total:.2f}%) "
-        f"| ECAPA {'trainable' if args.unfreeze_ecapa else 'FROZEN (baseline behaviour)'}"
+        f"| ECAPA {'FROZEN (ablation -- RNC can only reshape the projection)' if args.freeze_ecapa else 'trainable'}"
     )
     optimizer = torch.optim.AdamW(params, lr=args.lr, weight_decay=args.weight_decay)
     scheduler = (

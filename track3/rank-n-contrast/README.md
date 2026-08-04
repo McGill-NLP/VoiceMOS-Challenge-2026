@@ -49,16 +49,41 @@ consequence: SpeechBrain's freeze also calls `.eval()`, but the later `model.tra
 into training mode, so its BatchNorm *running statistics* keep drifting even though its weights are
 frozen.
 
-This directory reproduces that behaviour by default so the comparison is honest, and exposes both
-knobs explicitly:
+**Stage 2 reproduces that behaviour by default so the comparison is honest. Stage 1 does not, and
+must not** — see below.
 
-| flag | effect | default |
-|---|---|---|
-| `--unfreeze-ecapa` | genuinely train the 22.15M ECAPA parameters | off (= baseline) |
-| `--ecapa-eval-mode` | pin ECAPA to `eval()`, stopping BatchNorm drift | off (= baseline) |
+| flag | script | effect | default |
+|---|---|---|---|
+| `--freeze-ecapa` | `train_rnc.py` | freeze the backbone, leaving RNC only the 49k projection | off → **ECAPA trains** |
+| `--unfreeze-ecapa` | `train_head.py` | genuinely train the 22.15M ECAPA parameters | off (= baseline) |
+| `--ecapa-eval-mode` | both | pin ECAPA to `eval()`, stopping BatchNorm drift | off (= baseline) |
 
 Both training scripts log the trainable/total parameter count on startup, so this can never be
 silently wrong again.
+
+### Why stage 1 must fine-tune the backbone
+
+The first sweep froze ECAPA in stage 1, and the result was a stage that did essentially nothing:
+
+```
+Trainable parameters: 49,408 / 22,200,320 (0.22%) | ECAPA FROZEN
+step     50/8750 | loss 4.0010 | batch L* 2.3863 | gap +1.6147
+step   8750/8750 | loss 3.9297 | batch L* 2.3480 | gap +1.5816
+```
+
+0.07 nats over 8,750 steps and ~100 GPU-minutes. With the backbone fixed, the contrastive objective
+can only rotate a single `Linear(192, 256)` on top of frozen features — there is no representation
+left for it to learn. Scored against the released dev labels, those runs land below baseline 2 on
+both targets (best spk_sim 0.410 UTT-SRCC / 0.808 SYS-SRCC; best acc_sim 0.437 / 0.677).
+
+This was not merely a default: `--unfreeze-ecapa` **crashed on contact**. `SpeechEncoder.__init__`
+probes the encoder output dim with `encode_batch(torch.zeros(1, 16000))`, and SpeechBrain only calls
+`.eval()` itself when `freeze_params=True`. Unfrozen, that batch of 1 reached a `BatchNorm1d` in
+train mode and raised `Expected more than 1 value per channel ... torch.Size([1, 6144, 1])` before
+training began. The probe now runs under a temporary `.eval()`, so both modes construct.
+
+Stage 2 keeps its frozen default: the RNC arm is a linear probe on frozen features (the paper's best
+variant, Table 6c), and the baseline arm needs the frozen behaviour to reproduce baseline 2.
 
 ## Data
 
@@ -69,50 +94,85 @@ does — no derived splits:
 |---|---|---|
 | `sets/train.csv` | 13,687 | listener-wise ratings: 21 systems, 25 listeners, 2,800 unique pairs |
 | `sets/dev.csv` | 600 | **unlabelled** — `system_id,utterance_id,wav_a_path,wav_b_path` only |
+| `../vmc2026_track3_eval_phase_distro_v3_syn/sets/dev_with_labels.csv` | 600 | the same pairs **with** `spk_sim` and `acc_sim` |
 
 All scripts aggregate the listener-wise rows to per-pair means, matching the baseline.
 
-### There is no local validation signal
+### The labelled dev set
 
-`sets/dev.csv` ships without scores during the training phase, so nothing here can be scored offline.
-Consequences, all matching what the baseline does:
+`dev_with_labels.csv` was released after the first sweep ran, and the Slurm scripts now use it
+throughout. Pass it as `--val-csv` to either stage.
 
-* **No checkpoint selection.** Both stages train for a fixed number of steps and keep the last
-  checkpoint, exactly as the baseline's fixed 20,000 steps do. `--val-csv` exists in both scripts and
-  turns selection back on the moment a labelled split is available.
-* **Comparison against the baseline goes through CodaBench.** Produce a prediction CSV for
-  `sets/dev.csv` and submit it; the baseline's own dev numbers are in
-  [../baseline/README.md](../baseline/README.md) (baseline 2, spk_sim: UTT-SRCC 0.451, SYS-SRCC
-  0.860; acc_sim: UTT-SRCC 0.440, SYS-SRCC 0.861).
-* `calculate_metrics.py` is for when dev labels are released, or for any labelled split you pass it.
-  It also takes `--held-out-from TRAIN_CSV` to report metrics restricted to audio pairs absent from
-  training, which is worth using with any split built at the `(system_id, listener_id)` level — such
-  splits share audio pairs with train and the overall number blends memorization with generalization.
+**Use `--data-root` = the *train*-phase distro even for this CSV.** It ships in the eval-phase
+distro, but all 748 dev waveforms are present under the train-phase root while the eval-phase root is
+missing 160 of them (588/748). The scripts already resolve it this way, as do the encoder jobs.
+
+What it turns on:
+
+* **Stage 1 monitoring.** `--val-csv` reports the RNC loss against its lower bound `L*` and the
+  feature/label rank correlation (the paper's Table 1 diagnostic) every `--eval-steps`, and saves
+  `encoder_best.pt` by that correlation.
+* **Stage 2 checkpoint selection.** `--select-on sys_srcc` keeps `model_best.pt` at the best dev
+  system-level SRCC instead of taking the final step blind.
+* **Stage-1 checkpoint selection.** Probing costs about a minute on cached features, so the job
+  scripts probe *every* stage-1 checkpoint and keep the one with the best dev SYS-SRCC. A
+  contrastive stage has no reason to peak exactly at the last step, and stage 1's own
+  `encoder_best.pt` criterion does not always agree with downstream dev SRCC.
+
+⚠️ **Dev numbers are now selection-contaminated.** The same 600 pairs choose the stage-1 checkpoint
+and the head step, so the metrics the job prints are optimistic and are only useful for ranking runs
+against each other. The honest comparison is still the CodaBench eval set. Baseline 2's published dev
+numbers, for reference: spk_sim UTT-SRCC 0.451 / SYS-SRCC 0.860; acc_sim 0.440 / 0.861
+([../baseline/README.md](../baseline/README.md)).
+
+`calculate_metrics.py` scores any labelled split. It also takes `--held-out-from TRAIN_CSV` to
+restrict metrics to audio pairs absent from training, worth using with any split built at the
+`(system_id, listener_id)` level — such splits share audio pairs with train, so the overall number
+blends memorization with generalization.
 
 ## Running
 
 ### On the cluster (recommended)
 
 Two Slurm scripts in [../jobs/](../jobs/) run the whole thing unattended, each sweeping two learning
-rates (1e-3, the baseline's value, and 1e-4) and producing CodaBench-ready dev predictions:
+rates and producing CodaBench-ready dev predictions:
 
 ```bash
-sbatch track3/jobs/vmc26-t3-rnc-spk.sh     # speaker similarity
-sbatch track3/jobs/vmc26-t3-rnc-acc.sh     # accent similarity
+sbatch track3/jobs/voicemos-track3-rank-n-contrast-speaker.sh   # speaker similarity
+sbatch track3/jobs/voicemos-track3-rank-n-contrast-accent.sh    # accent similarity
 ```
 
-One L40S, 8 h wall clock (~3 h of work: 1.4 h per learning rate for stage 1, plus a couple of minutes
-each for stage 2 and inference). Outputs land in `egs/<metric>_lr<lr>/`, and the job log ends with the
-paths of the submission CSVs.
+One L40S, 12 h wall clock (~6 h of work: 2.7 h per learning rate for stage 1, ~8 min to probe its
+five checkpoints, plus a couple of minutes for inference). Outputs land in `egs/<metric>_ftlr<lr>/` —
+`ftlr`, not `lr`, so they do not overwrite the frozen-ECAPA sweep already in `egs/`. The submission
+CSV is `egs/<metric>_ftlr<lr>/dev_<metric>.csv`, matching the layout in `../encoders/egs/`, and each
+run's per-checkpoint probes are kept in `probe_encoder_*/` alongside it. The job log ends with the
+submission paths and prints dev metrics per run (optimistic — see the selection caveat above).
 
-**Batch size is capped at 128.** At 256, ECAPA's attentive-pooling `F.pad` raises `input tensor must
-fit into 32-bit index math` — not an OOM but a hard indexing limit, triggered because repetitive
-padding stretches every clip in a batch to the longest one. Measured at 128: 19.85 GiB peak,
-0.56 s/step, 21.9 steps/epoch. Going above 128 needs `--max-audio-sec` to cap the padded length.
+**Learning rates are 1e-4 and 1e-5.** The frozen sweep used (1e-3, 1e-4), calibrated for a 49k
+projection; those rates applied to a 22.15M pretrained backbone would destroy the features it starts
+from.
 
-Stage 1 checkpoints every 1,750 steps (~100 epochs). Since stage 2 costs about two minutes, once dev
-labels are released you can re-probe several stage-1 checkpoints and pick by real dev SRCC instead of
-committing to the last one.
+**Batch size is 96 with `--max-audio-sec 6`.** Training ECAPA rather than just the projection costs
+roughly 5× the memory, so the frozen sweep's 128 no longer fits. Measured on a 46 GiB L40S with the
+backbone trainable:
+
+| batch | crop | peak | s/step |
+|---|---|---|---|
+| 64 | — | 36.6 GiB | 0.80 |
+| 64 | 6 s | 22.3 GiB | 0.58 |
+| 96 | 6 s | 31.6 GiB | 0.84 |
+| 128 | 6 s | 39.9 GiB | 1.04 |
+
+Without a crop, peak memory follows the *longest* clip in the batch — repetitive padding stretches
+every clip to it — and clips reach 14.9 s against a 4.8 s mean, so an unlucky batch OOMs hours into a
+run. The 6 s crop bounds that; p95 duration is 6.9 s, so most clips are untouched and the random crop
+doubles as augmentation over only 2,800 unique pairs. RNC gains monotonically with in-batch positives
+(paper Table 6a), so 96 is the largest batch that still leaves real headroom; 128 fits if you can
+accept 6 GiB of margin. The crop applies to stage 1 only — stage 2 and inference use full audio.
+
+Stage 1 checkpoints every 2,340 steps (~80 epochs), and each checkpoint is probed against the
+labelled dev set so the kept representation is chosen rather than assumed.
 
 ### Interactively
 
@@ -120,6 +180,7 @@ committing to the last one.
 module load miniconda/3 && conda activate VoiceMOS
 
 DR=../baseline/data/vmc2026_track3_train_phase_distro_v3_syn
+DEV_LABELS=../baseline/data/vmc2026_track3_eval_phase_distro_v3_syn/sets/dev_with_labels.csv
 ```
 
 ### Stage 1 — RNC representation learning
@@ -128,11 +189,15 @@ DR=../baseline/data/vmc2026_track3_train_phase_distro_v3_syn
 python train_rnc.py \
     --data-root $DR --train-csv $DR/sets/train.csv \
     --target-metric spk_sim --outdir egs/rnc_spk_sim \
-    --batch-size 64 --train-steps 13000
+    --batch-size 96 --max-audio-sec 6 --lr 1e-5 --train-steps 11700 \
+    --val-csv $DEV_LABELS --eval-steps 500
 ```
 
+All 22.15M ECAPA parameters train. Add `--freeze-ecapa` for the ablation that keeps them fixed.
+
 No head, no regression loss. Logs the RNC loss, its lower bound `L*`, and the gap between them;
-writes `encoder_last.pt`.
+writes `encoder_last.pt`, plus `encoder_best.pt` by feature/label rank correlation when `--val-csv`
+is given.
 
 ### Stage 2 — linear probe on the frozen encoder
 
@@ -141,11 +206,13 @@ python train_head.py \
     --data-root $DR --train-csv $DR/sets/train.csv \
     --target-metric spk_sim --outdir egs/rnc_spk_sim/head \
     --encoder-ckpt egs/rnc_spk_sim/encoder_last.pt --freeze-encoder \
-    --head linear --loss l1
+    --head linear --loss l1 \
+    --val-csv $DEV_LABELS --select-on sys_srcc
 ```
 
 Because a frozen encoder gives deterministic features, they are extracted once and cached; the probe
-then trains in seconds.
+then trains in seconds. Repeat it against each `encoder_step*.pt` and keep the best `model_best.pt` —
+that is exactly what the job scripts automate.
 
 ### Baseline arm (for comparison, same data code)
 
@@ -163,16 +230,16 @@ MLP head and range clipping, i.e. official baseline 2, but driven through identi
 
 ```bash
 python inference.py --data-root $DR --csv-path $DR/sets/dev.csv \
-    --checkpoint egs/rnc_spk_sim/head/model_last.pt --target-metric spk_sim \
-    --out egs/rnc_spk_sim/head/dev.csv
+    --checkpoint egs/rnc_spk_sim/head/model_best.pt --target-metric spk_sim \
+    --out egs/rnc_spk_sim/dev_spk_sim.csv
 ```
 
 `inference.py` handles unlabelled CSVs: the `spk_sim` column comes out empty and no metrics are
-printed. Once dev labels are released:
+printed. Score the result against the labelled dev set with:
 
 ```bash
-python calculate_metrics.py --prediction-csv egs/rnc_spk_sim/head/dev.csv \
-    --ground-truth-csv <labelled dev csv>
+python calculate_metrics.py --prediction-csv egs/rnc_spk_sim/dev_spk_sim.csv \
+    --ground-truth-csv $DEV_LABELS
 ```
 
 Repeat any of the above with `--target-metric acc_sim` for the accent model.

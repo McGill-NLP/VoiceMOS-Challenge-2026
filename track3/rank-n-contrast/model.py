@@ -53,8 +53,15 @@ class SpeechEncoder(nn.Module):
         for param in self.ssl_model.parameters():
             param.requires_grad = not freeze_ecapa
 
+        # Probe the output dim with ECAPA pinned to eval. In train mode this is a
+        # batch of 1 reaching a BatchNorm1d, which raises "Expected more than 1
+        # value per channel". SpeechBrain only calls .eval() itself when
+        # freeze_params=True, so without this every unfrozen build crashed here.
+        was_training = self.ssl_model.training
+        self.ssl_model.eval()
         with torch.no_grad():
             output_dim = self.ssl_model.encode_batch(torch.zeros(1, 16000)).shape[-1]
+        self.ssl_model.train(was_training)
 
         if use_projection:
             self.projection = nn.Linear(output_dim, embedding_dim)
