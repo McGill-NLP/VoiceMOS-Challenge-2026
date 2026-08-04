@@ -178,6 +178,10 @@ def save_checkpoint(path, model, config):
 # and targets per system first, which is what the challenge's system-level scores do.
 METRIC_KEYS = ["mse_utt", "lcc_utt", "srcc_utt", "mse_sys", "lcc_sys", "srcc_sys"]
 
+# Per-term columns in the dev log. Written as NaN unless --loss builds a CombineLosses, so
+# the CSV schema stays fixed across arms and the sweep can be read with one parser.
+LOSS_TERM_KEYS = ["loss_clipped", "loss_contrastive"]
+
 
 @torch.no_grad()
 def evaluate(model, loader, target_metric, device):
@@ -391,16 +395,31 @@ def main():
     if dev_loader is not None:
         log_file = open(log_path, "w", newline="", encoding="utf-8")
         log_writer = csv.writer(log_file)
-        log_writer.writerow(["step", "train_mse"] + METRIC_KEYS)
+        log_writer.writerow(["step", "train_loss"] + LOSS_TERM_KEYS + METRIC_KEYS)
+
+    # Running mean of each loss term since the last evaluation. Only populated for the
+    # combined objective; this is what shows whether the regression term is drowning out
+    # the contrastive one.
+    term_sums = defaultdict(float)
+    term_batches = 0
 
     def run_eval(step, recent_loss, track_best=True):
-        nonlocal best_score
+        nonlocal best_score, term_batches
         results = evaluate(model, dev_loader, args.target_metric, device)
-        logging.info(f"[dev @ step {step}] {format_metrics(results)}")
+        terms = {k: term_sums[k] / term_batches for k in term_sums} if term_batches else {}
+        term_str = "  ".join(f"{k}={v:.4f}" for k, v in terms.items())
+        line = f"[dev @ step {step}] {format_metrics(results)}"
+        if term_str:
+            line += f"  |  train terms: {term_str}"
+        logging.info(line)
         log_writer.writerow(
-            [step, f"{recent_loss:.6f}"] + [f"{results.get(k, float('nan')):.6f}" for k in METRIC_KEYS]
+            [step, f"{recent_loss:.6f}"]
+            + [f"{terms.get(k.replace('loss_', ''), float('nan')):.6f}" for k in LOSS_TERM_KEYS]
+            + [f"{results.get(k, float('nan')):.6f}" for k in METRIC_KEYS]
         )
         log_file.flush()
+        term_sums.clear()
+        term_batches = 0
 
         # MSE is better when lower; the correlations are better when higher.
         score = results.get(args.best_metric)
@@ -447,6 +466,11 @@ def main():
             scaled_loss = loss / args.accumulate_steps
             scaled_loss.backward()
 
+            if isinstance(criterion, CombineLosses):
+                for term_name, term_value in criterion.components(preds, targets).items():
+                    term_sums[term_name] += term_value
+                term_batches += 1
+
             train_loss += loss.item()
             forward_steps += 1
 
@@ -458,9 +482,10 @@ def main():
                 global_step += 1
                 pbar.update(1)
 
-                # Update progress bar description every step
+                # Update progress bar description every step. Labelled with the actual
+                # objective -- it is not always MSE.
                 recent_loss = train_loss / args.accumulate_steps
-                pbar.set_postfix({"MSE": f"{recent_loss:.4f}"})
+                pbar.set_postfix({args.loss: f"{recent_loss:.4f}"})
                 train_loss = 0.0
 
                 # Save checkpoint every N steps
@@ -473,7 +498,7 @@ def main():
                 if dev_loader is not None and global_step % args.eval_steps == 0:
                     results = run_eval(global_step, recent_loss)
                     pbar.set_postfix({
-                        "MSE": f"{recent_loss:.4f}",
+                        args.loss: f"{recent_loss:.4f}",
                         args.best_metric: f"{results.get(args.best_metric, float('nan')):.4f}",
                     })
 
@@ -489,10 +514,17 @@ def main():
         if global_step % args.eval_steps != 0:
             run_eval(global_step, float("nan"))
         logging.info(f"Dev history written to {log_path}")
-        logging.info(
-            f"Best {args.best_metric} = {best_score:.4f} "
-            f"(model_best_{args.target_metric}.pt); final-step model is {os.path.basename(save_path)}."
-        )
+        if best_score is None:
+            # Every evaluation returned NaN for --best-metric, so no model_best was written.
+            logging.warning(
+                f"No checkpoint tracked: {args.best_metric} was never finite. "
+                f"Use {os.path.basename(save_path)}."
+            )
+        else:
+            logging.info(
+                f"Best {args.best_metric} = {best_score:.4f} "
+                f"(model_best_{args.target_metric}.pt); final-step model is {os.path.basename(save_path)}."
+            )
         log_file.close()
 
 if __name__ == "__main__":

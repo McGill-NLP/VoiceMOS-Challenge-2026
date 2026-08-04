@@ -76,6 +76,10 @@ class ClippedMSELoss(nn.Module):
         return torch.mean(threshold * loss)
 
 
+# Column-friendly names for the per-term logging in finetune.py.
+SHORT_NAMES = {"ClippedMSELoss": "clipped", "ContrastiveLoss": "contrastive"}
+
+
 class CombineLosses(nn.Module):
     """Weighted sum of losses, all sharing the (pred, gt) signature."""
 
@@ -90,10 +94,18 @@ class CombineLosses(nn.Module):
             loss = loss + weight * instance(pred_score, gt_score)
         return loss
 
+    @torch.no_grad()
     def components(self, pred_score: torch.Tensor, gt_score: torch.Tensor) -> dict:
-        """Unweighted value of each term, for logging."""
+        """Unweighted value of each term, for logging.
+
+        Worth watching: the two terms are summed with fixed weights, so if the regression
+        term is an order of magnitude larger than the contrastive one it dominates the
+        gradient and the ranking signal is effectively switched off.
+        """
         return {
-            type(inst).__name__: float(inst(pred_score, gt_score).detach())
+            SHORT_NAMES.get(type(inst).__name__, type(inst).__name__): float(
+                inst(pred_score, gt_score)
+            )
             for inst in self.loss_instances
         }
 

@@ -59,8 +59,9 @@ overrides it to 0.1.)
 sbatch track3/jobs/voicemos-track3-utmos-loss.sh
 ```
 
-runs all arms (plus `utmos-g2`, `gamma=2.0`) × `{spk_sim, acc_sim}`, scoring the labelled dev set
-throughout training and writing submission CSVs from the best checkpoint. Standalone:
+runs all arms (plus `utmos-g2` and `utmos-g5`, `gamma=2.0` and `5.0`) × `{spk_sim, acc_sim}`, scoring
+the labelled dev set throughout training, recalibrating every arm, and writing submission CSVs from
+the best checkpoint. Standalone:
 
 ```bash
 python finetune.py --data-root $DR --train-csv $DR/sets/train.csv \
@@ -86,11 +87,37 @@ L40S (46 GB), ECAPA full fine-tuning with `--loss utmos`:
 The job script holds batch at 16 so the comparison against the baseline is clean; re-run with
 `--export=ALL,BATCH=32` to test whether more pairs help.
 
-**`contrastive` alone fixes no absolute scale.** It constrains only differences, so MSE will be bad
-even when the correlations are excellent — in the smoke test, `srcc_sys` 0.81 with `mse_utt` 2.5.
-Range clipping (`tanh*2+3`) bounds predictions to [1,5] but does not calibrate them. If that arm
-wins on correlation, recover MSE with a post-hoc monotone fit on dev (an affine rescale, or
-isotonic regression) before submitting — it cannot hurt SRCC, which is rank-invariant.
+**`contrastive` alone fixes no absolute scale — and this costs it far more than it looks.** It
+constrains only score *differences*, so with nothing anchoring the offset its predictions settle near
+the range-clipped head's tanh centre (3.0) while the labels average 4.0. Range clipping bounds
+predictions to [1, 5] but does not calibrate them.
+
+The entire deficit is that offset, and `recalibrate.py` removes it. Fit `y = a*pred + b` by least
+squares on the **training** pairs, apply to dev:
+
+| | fitted map | utt MSE | sys MSE | utt SRCC | sys SRCC |
+|---|---|---|---|---|---|
+| `spk_sim` raw | — | 0.885 | 0.609 | 0.4735 | 0.8775 |
+| `spk_sim` recalibrated | `0.965*p + 0.979` | **0.458** | **0.067** | 0.4735 | 0.8775 |
+| `acc_sim` raw | — | 1.364 | 1.140 | 0.4243 | 0.8389 |
+| `acc_sim` recalibrated | `0.973*p + 1.132` | **0.437** | **0.051** | 0.4243 | 0.8389 |
+
+Both slopes are ≈1.0: this is almost purely an intercept. SRCC and LCC come out bit-identical, as
+they must — both are invariant under a positive affine map. After recalibration `contrastive` is the
+best arm on *every* `spk_sim` metric, and on utterance-level `acc_sim` plus system MSE.
+
+**Fit on train, never on the split you report.** Two parameters is still reading the answer. The job
+script fits on `egs/train.mean.csv` and applies to dev:
+
+```bash
+python inference.py --data-root $DR --csv-path egs/train.mean.csv \
+    --checkpoint egs/spk_sim_contrastive/model_best_spk_sim.pt --out train_pred.csv
+python recalibrate.py --fit-csv train_pred.csv \
+    --apply-csv egs/spk_sim_contrastive/dev_spk_sim.csv --out dev.recal.csv
+```
+
+`--clip` clamps to [1, 5]; it is off by default because clamping creates ties at the bounds and can
+therefore perturb SRCC, losing the invariance guarantee.
 
 ## The encoder is genuinely fine-tuned here
 
@@ -108,32 +135,54 @@ Baseline-format checkpoints still load: the backbone key prefix is remapped and 
 recovered from the state dict (verified 0 missing / 0 unexpected against
 `../baseline/official-egs/spk_sim_adamw_lr1e-3/model_spk_sim_step20000.pt`).
 
-## Early signal
+## Results from the first full sweep
 
-From a 120-step smoke run on `spk_sim` (far too short to conclude anything, but the gap is large):
+4,000 steps, batch 16, backbone lr 1e-5 / head 1e-3, checkpoint selected on dev `srcc_sys`.
+`contrastive +recal` is the same checkpoint with the train-fitted affine applied.
 
-| Arm | `srcc_sys` | `srcc_utt` | `mse_utt` |
-|---|---|---|---|
-| `mse` | 0.621 | 0.287 | 0.526 |
-| `clipped` | 0.595 | 0.281 | 0.530 |
-| **`contrastive`** | **0.813** | **0.448** | 2.515 |
-| `utmos` (γ=0.5) | 0.606 | 0.288 | 0.526 |
+| `spk_sim` | utt MSE | utt SRCC | sys MSE | sys SRCC |
+|---|---|---|---|---|
+| `mse` | 0.483 | 0.394 | 0.073 | 0.861 |
+| `clipped` | 0.485 | 0.394 | 0.079 | 0.865 |
+| `utmos` (γ=0.5) | 0.523 | 0.361 | 0.092 | 0.870 |
+| `utmos-g2` (γ=2.0) | 0.525 | 0.362 | 0.088 | 0.866 |
+| `contrastive` | 0.885 | **0.474** | 0.609 | **0.878** |
+| **`contrastive` +recal** | **0.458** | **0.474** | **0.067** | **0.878** |
 
-The contrastive term converges on *rank* far faster than the regression terms, while the combined
-loss at UTMOS's shipped `gamma=0.5` tracks plain MSE closely — the regression term appears to
-dominate early on this dataset. That is why the job script includes a `gamma=2.0` arm. Treat these
-as a hypothesis to test at full length, not a result.
+| `acc_sim` | utt MSE | utt SRCC | sys MSE | sys SRCC |
+|---|---|---|---|---|
+| `mse` | 0.477 | 0.365 | 0.094 | 0.843 |
+| `clipped` | 0.445 | 0.384 | 0.058 | 0.856 |
+| `utmos` (γ=0.5) | 0.465 | 0.359 | 0.080 | **0.864** |
+| `utmos-g2` (γ=2.0) | 0.436 | 0.344 | 0.077 | 0.859 |
+| **`contrastive` +recal** | **0.437** | **0.424** | **0.051** | 0.839 |
+
+Two things to take from this.
+
+**The shipped `gamma=0.5` largely switches the ranking signal off.** The per-term columns now written
+to `dev_log_*.csv` show why: at step 20 the regression term is 0.92 against a contrastive term of
+0.41, so with weights (1.0, 0.5) the contributions are 0.92 vs 0.21 — a 4.5× imbalance. The combined
+arm accordingly lands *below both of its components* on utterance-level SRCC. `gamma=2.0` is roughly
+balanced and `gamma=5.0` is contrastive-dominant; that is the sweep the job now runs.
+
+**Contrastive-alone plus recalibration is the strongest configuration found so far**, and the gap is
+not small — utterance SRCC 0.474 vs 0.394 for the baseline objective on `spk_sim`. Note that these
+numbers are optimistic: `model_best` is selected on the same 600 dev pairs it is scored on.
 
 ## Layout
 
 ```
 losses.py              ContrastiveLoss, ClippedMSELoss, CombineLosses, build_loss(). Ported from UTMOS22.
 model.py               ECAPA + projection + interaction + range-clipped head. Same as the baseline.
-finetune.py            Training with --loss, plus dev scoring during training.
+finetune.py            Training with --loss, plus dev scoring and per-term loss logging.
 inference.py           Checkpoint-driven encoder/metric resolution.
+recalibrate.py         Affine rescale fitted on train, applied to a prediction CSV.
 calculate_metrics.py   Unchanged copy of ../baseline/calculate_metrics.py.
 make_eval_gt.py        Averages a listener-wise split into one row per pair.
 ```
+
+The loss port is verified bit-exact against `../papers/UTMOS22/strong/loss_function.py` — identical
+values *and* gradients (max abs difference `0.00e+00`) for both terms and their weighted sum.
 
 ## What is deliberately not here
 

@@ -20,9 +20,28 @@
 #   clipped      clipped MSE alone (tau=0.25), isolating the dead zone.
 #   contrastive  UTMOS contrastive alone (margin=0.1). Optimises rank, fixes no scale.
 #   utmos        1.0 * clipped + 0.5 * contrastive -- UTMOS Eq. 1 with shipped weights.
-#   utmos-g2     1.0 * clipped + 2.0 * contrastive -- see the note on gamma below.
+#   utmos-g2     1.0 * clipped + 2.0 * contrastive
+#   utmos-g5     1.0 * clipped + 5.0 * contrastive -- see the note on gamma below.
 #
 #   sbatch track3/jobs/voicemos-track3-utmos-loss.sh
+#
+# Two things changed after the first sweep:
+#
+#  1. EVERY ARM IS ALSO SCORED RECALIBRATED. The contrastive term constrains only score
+#     differences, so it fixes no absolute scale and its predictions settle near the
+#     range-clipped head's tanh centre (3.0) against labels averaging 4.0. That leaves
+#     SRCC/LCC untouched but wrecks MSE, which made the contrastive arm look far worse
+#     than it is. recalibrate.py fits y = a*pred + b on the TRAINING pairs and applies it
+#     to dev: measured a~0.97, b~+1.0, i.e. almost pure intercept. On the first sweep's
+#     contrastive arm that took spk_sim utt MSE 0.885 -> 0.458 and sys MSE 0.609 -> 0.067
+#     with SRCC bit-identical, making it the best arm on every spk_sim metric.
+#
+#  2. GAMMA IS SWEPT FURTHER. The per-term logging added to finetune.py shows the
+#     regression term outweighing the contrastive one about 4.5x at the shipped gamma=0.5
+#     (clipped 0.92 vs 0.5*0.41=0.21 at step 20), so the ranking signal is largely
+#     switched off. gamma=2 is roughly balanced and gamma=5 is contrastive-dominant;
+#     together with contrastive-alone this sweeps the ratio from pure regression to pure
+#     ranking.
 #
 # Deliberately NOT using `set -e`: if one arm fails, the others should still run rather
 # than wasting the whole allocation.
@@ -103,21 +122,32 @@ SAVE_STEPS=${SAVE_STEPS:-1000}
 BEST_METRIC=${BEST_METRIC:-srcc_sys}
 
 METRICS=(spk_sim acc_sim)
-ARMS=(mse clipped contrastive utmos utmos-g2)
+ARMS=(mse clipped contrastive utmos utmos-g2 utmos-g5)
 
 echo "=================================================================="
 echo "arms=${ARMS[*]}  metrics=${METRICS[*]}"
 echo "batch=$BATCH (contrastive sees $((BATCH*(BATCH-1))) ordered pairs/step)"
 echo "steps=$TRAIN_STEPS  encoder_lr=$ENCODER_LR  head_lr=$HEAD_LR"
+echo "dev labels : $DEV_LABELS"
+echo "             -> scored during training, selects model_best on $BEST_METRIC,"
+echo "                and is the ground truth for the final raw/recalibrated scoring"
 echo "=================================================================="
 
 mkdir -p egs
 if [ ! -f "$DEV_LABELS" ]; then
     echo "ERROR: no labelled dev set at $DEV_LABELS"; exit 1
 fi
-python make_eval_gt.py --in "$DEV_LABELS" --out egs/dev.mean.csv \
-    || { echo "ERROR: could not build dev ground truth"; exit 1; }
-DEV_GT=egs/dev.mean.csv
+# Scored directly against the released labels -- no make_eval_gt.py round-trip. That script
+# collapses listener-wise rows to per-pair means, and dev_with_labels.csv is already one row
+# per pair (600 rows, both metrics populated), so running it produced a byte-identical copy.
+DEV_GT=$DEV_LABELS
+
+# train.csv DOES need the round-trip: it is listener-wise, 13,687 rows over 2,800 unique
+# pairs at ~4.9 ratings each. Used only to FIT the recalibration -- fitting on dev and then
+# reporting dev would be contamination, only two parameters but still reading the answer.
+python make_eval_gt.py --in "$TRAIN_CSV" --out egs/train.mean.csv \
+    || { echo "ERROR: could not build train ground truth"; exit 1; }
+TRAIN_GT=egs/train.mean.csv
 
 ##################################################################
 # Sweep
@@ -132,11 +162,12 @@ for ARM in "${ARMS[@]}"; do
     echo "# $TAG  ($(date))"
     echo "##################################################################"
 
-    # utmos-g2 is the utmos loss with gamma raised. In the smoke test the combined loss at
-    # the shipped gamma=0.5 tracked plain MSE closely while contrastive-alone pulled far
-    # ahead on rank, which suggests the regression term dominates early on this dataset.
+    # The utmos-g* arms raise gamma against the fixed beta=1.0. See the gamma note in the
+    # header: the per-term dev-log columns show the regression term outweighing the
+    # contrastive one ~4.5x at the shipped gamma=0.5.
     case "$ARM" in
         utmos-g2) LOSS_ARGS=(--loss utmos --gamma 2.0) ;;
+        utmos-g5) LOSS_ARGS=(--loss utmos --gamma 5.0) ;;
         *)        LOSS_ARGS=(--loss "$ARM") ;;
     esac
 
@@ -160,17 +191,39 @@ for ARM in "${ARMS[@]}"; do
     echo "Selected checkpoint: $CKPT"
 
     echo "--- inference on the official dev set ---"
-    rm -f "$OUT/dev_${METRIC}.csv"
+    rm -f "$OUT/dev_${METRIC}.csv" "$OUT/dev_${METRIC}.recal.csv"
     python inference.py \
         --data-root "$DR" --csv-path "$DEV_CSV" \
         --checkpoint "$CKPT" --out "$OUT/dev_${METRIC}.csv"
     if [ $? -ne 0 ]; then
-        echo "INFERENCE FAILED for $TAG"; FAILED+=("$TAG:dev")
-    else
-        echo "--- scoring against the official dev labels ---"
-        python calculate_metrics.py \
-            --prediction-csv "$OUT/dev_${METRIC}.csv" --ground-truth-csv "$DEV_GT"
+        echo "INFERENCE FAILED for $TAG"; FAILED+=("$TAG:dev"); continue
     fi
+
+    echo "--- scoring against the official dev labels (raw) ---"
+    python calculate_metrics.py \
+        --prediction-csv "$OUT/dev_${METRIC}.csv" --ground-truth-csv "$DEV_GT"
+
+    # Recalibration: predict the TRAINING pairs, fit y = a*pred + b there, apply to dev.
+    # ~2,800 pairs, about a minute. Rank metrics are invariant to this, so only MSE moves.
+    echo "--- recalibration (affine fitted on train, applied to dev) ---"
+    python inference.py \
+        --data-root "$DR" --csv-path "$TRAIN_GT" \
+        --checkpoint "$CKPT" --out "$OUT/train_${METRIC}.csv"
+    if [ $? -ne 0 ]; then
+        echo "TRAIN INFERENCE FAILED for $TAG"; FAILED+=("$TAG:train_pred"); continue
+    fi
+
+    python recalibrate.py \
+        --fit-csv "$OUT/train_${METRIC}.csv" \
+        --apply-csv "$OUT/dev_${METRIC}.csv" \
+        --out "$OUT/dev_${METRIC}.recal.csv"
+    if [ $? -ne 0 ]; then
+        echo "RECALIBRATION FAILED for $TAG"; FAILED+=("$TAG:recal"); continue
+    fi
+
+    echo "--- scoring against the official dev labels (recalibrated) ---"
+    python calculate_metrics.py \
+        --prediction-csv "$OUT/dev_${METRIC}.recal.csv" --ground-truth-csv "$DEV_GT"
 done
 done
 
@@ -200,8 +253,62 @@ PY
 done
 done
 echo ""
+echo "Final dev metrics per arm, raw vs recalibrated (rank metrics are affine-invariant,"
+echo "so only MSE moves; the affine was fitted on train, never on dev):"
+python - "$DEV_GT" "${METRICS[*]}" "${ARMS[*]}" <<'PY'
+import os, sys, csv
+sys.path.insert(0, os.getcwd())
+from calculate_metrics import compute_metrics
+from collections import defaultdict
+import numpy as np
+
+gt_path, metrics, arms = sys.argv[1], sys.argv[2].split(), sys.argv[3].split()
+gt = {}
+for r in csv.DictReader(open(gt_path)):
+    gt[(r["wav_a_path"], r["wav_b_path"])] = r
+
+def score(path, metric):
+    if not os.path.exists(path):
+        return None
+    y, p, sysid = [], [], []
+    for r in csv.DictReader(open(path)):
+        key = (r["wav_a_path"], r["wav_b_path"])
+        g = gt.get(key)
+        if not g or not g.get(metric, "").strip():
+            continue
+        y.append(float(g[metric])); p.append(float(r[f"pred_{metric}"]))
+        sysid.append(g.get("system_id", ""))
+    if not y:
+        return None
+    y, p = np.array(y), np.array(p)
+    ut = compute_metrics(y, p)
+    ty, tp = defaultdict(list), defaultdict(list)
+    for s, a, b in zip(sysid, y, p):
+        ty[s].append(a); tp[s].append(b)
+    sy = compute_metrics(np.array([np.mean(ty[s]) for s in ty]),
+                         np.array([np.mean(tp[s]) for s in ty]))
+    return ut, sy
+
+hdr = f"  {'arm':<22}{'utt MSE':>9}{'utt LCC':>9}{'utt SRCC':>10}{'sys MSE':>9}{'sys LCC':>9}{'sys SRCC':>10}"
+for metric in metrics:
+    print(f"\n  [{metric}]")
+    print(hdr)
+    for arm in arms:
+        d = f"egs/{metric}_{arm}"
+        for label, path in ((arm, f"{d}/dev_{metric}.csv"),
+                            (f"{arm} +recal", f"{d}/dev_{metric}.recal.csv")):
+            r = score(path, metric)
+            if r is None:
+                continue
+            (um, ul, us), (sm, sl, ss) = r
+            print(f"  {label:<22}{um:>9.4f}{ul:>9.4f}{us:>10.4f}{sm:>9.4f}{sl:>9.4f}{ss:>10.4f}")
+PY
+echo ""
 echo "Baseline 2 reference (dev): spk SYS-SRCC 0.860, acc SYS-SRCC 0.861"
-echo "Full dev curves: egs/*/dev_log_*.csv"
+echo "Full dev curves (incl. per-term loss columns): egs/*/dev_log_*.csv"
+echo ""
+echo "NOTE: model_best is selected on dev $BEST_METRIC and scored on the same 600 pairs,"
+echo "      so these numbers are optimistic. CodaBench eval is the honest comparison."
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo "Failures: ${FAILED[*]}"
 fi
