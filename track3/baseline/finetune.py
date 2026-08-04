@@ -148,6 +148,8 @@ def main():
     parser.add_argument("--train-steps", type=int, default=20000, help="Total number of training steps.")
     parser.add_argument("--save-steps", type=int, default=5000, help="Save a checkpoint every N steps.")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate.")
+    parser.add_argument("--encoder-lr", type=float, default=None, help="Separate learning rate for the pretrained encoder. Defaults to --lr, i.e. a single AdamW group over every parameter.")
+    parser.add_argument("--freeze-ssl", action="store_true", help="Train only the projection and MLP head. This is what the published baseline actually did.")
     parser.add_argument("--verbose", type=int, default=1, help="logging level.")
     args = parser.parse_args()
 
@@ -187,13 +189,42 @@ def main():
         model_name="speechbrain/spkrec-ecapa-voxceleb",
         use_projection=True,
         mlp_heads=[args.target_metric],
-        freeze_ssl=False # Fine-tuning everything
+        freeze_ssl=args.freeze_ssl
     )
     model.to(device)
 
+    # Report what is actually being trained. The encoder used to be frozen silently by
+    # SpeechBrain regardless of what was requested here, so this is worth stating outright
+    # rather than trusting the flag.
+    encoder_params = [p for p in model.encoder.ssl_model.parameters()]
+    encoder_ids = {id(p) for p in encoder_params}
+    head_params = [p for p in model.parameters() if id(p) not in encoder_ids]
+    n_total = sum(p.numel() for p in model.parameters())
+    n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    n_train_enc = sum(p.numel() for p in encoder_params if p.requires_grad)
+    logging.info(
+        f"Parameters: {n_total / 1e6:.2f}M total, {n_train / 1e6:.2f}M trainable "
+        f"({n_train_enc / 1e6:.2f}M of them inside the encoder)."
+    )
+    if not args.freeze_ssl and n_train_enc == 0:
+        logging.error("Encoder has no trainable parameters despite --freeze-ssl not being set. Aborting.")
+        return
+
     # 3. Optimizer & Criterion
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    criterion = torch.nn.MSELoss() 
+    if args.freeze_ssl:
+        param_groups = [{"params": head_params, "lr": args.lr}]
+    elif args.encoder_lr is not None:
+        param_groups = [
+            {"params": encoder_params, "lr": args.encoder_lr},
+            {"params": head_params, "lr": args.lr},
+        ]
+        logging.info(f"Encoder lr={args.encoder_lr}, head lr={args.lr}")
+    else:
+        # The baseline recipe: one group, one learning rate, everything in it.
+        param_groups = [{"params": list(model.parameters()), "lr": args.lr}]
+
+    optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
+    criterion = torch.nn.MSELoss()
 
     # 4. Training Loop
     model.train()

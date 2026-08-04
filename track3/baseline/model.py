@@ -52,13 +52,30 @@ class SpeechEncoder(torch.nn.Module):
     ):
         super().__init__()
         
-        # Load to CPU first; PyTorch's Trainer will automatically move it to GPU later
-        self.ssl_model = EncoderClassifier.from_hparams(source=model_name, run_opts={"device": "cpu"})
-        
+        # Load to CPU first; PyTorch's Trainer will automatically move it to GPU later.
+        #
+        # freeze_params=False is what makes freeze_ssl mean anything. SpeechBrain's
+        # `Pretrained.__init__` defaults it to True, which sets requires_grad=False on
+        # every backbone parameter and calls .eval() on them. This class never overrode
+        # that default, so the `freeze_ssl=False  # Fine-tuning everything` passed by
+        # finetune.py was a no-op: 22.15M of 22.27M parameters stayed frozen and only the
+        # 0.12M-parameter head ever trained. Freezing is decided here instead.
+        self.ssl_model = EncoderClassifier.from_hparams(
+            source=model_name,
+            run_opts={"device": "cpu"},
+            freeze_params=False,
+        )
+        self.freeze_ssl = freeze_ssl
+
+        # freeze_params=False also skips SpeechBrain's own .eval() call, which would
+        # otherwise leave the backbone in train mode. Start in eval; train() decides
+        # what gets flipped back.
+        self.ssl_model.eval()
+
         if freeze_ssl:
             for param in self.ssl_model.parameters():
                 param.requires_grad = False
-        
+
         # Dynamically determine the embedding dimension using a dummy tensor
         with torch.no_grad():
             dummy_wav = torch.zeros(1, 16000)
@@ -73,9 +90,23 @@ class SpeechEncoder(torch.nn.Module):
             self.projection = nn.Identity()
             self.final_dim = output_dim
 
+    def train(self, mode: bool = True):
+        """Keep a frozen encoder in eval mode.
+
+        ECAPA carries 31 BatchNorm1d layers. requires_grad=False stops their weights from
+        being updated but not their running statistics, which drift on every forward pass
+        in train mode and change the embeddings a "frozen" encoder produces. Holding the
+        backbone in eval keeps the frozen configuration a faithful reproduction of the
+        published baseline. When it is being fine-tuned, it trains normally.
+        """
+        super().train(mode)
+        if self.freeze_ssl:
+            self.ssl_model.eval()
+        return self
+
     def forward(self, waveform, lengths=None):
         device = waveform.device
-        
+
         # SpeechBrain expects lengths as relative percentages (0.0 to 1.0)
         wav_lens = None
         if lengths is not None:
