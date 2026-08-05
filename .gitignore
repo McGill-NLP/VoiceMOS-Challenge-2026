@@ -229,6 +229,7 @@ track3/speechllm_judge/models
 track3/encoders/**/*.pt
 track3/utmos-approach/**/*.pt
 track3/baseline/**/*.pt
+track3/unified/**/*.pt
 
 # Others
 dev.ipynb
