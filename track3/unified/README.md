@@ -81,9 +81,18 @@ embedding width (256 by default):
 | `no-b` | `[a, |a−b|, a⊙b]` | 3d | drops the reference block |
 | `symmetric` | `[a+b, |a−b|, a⊙b]` | 3d | `f(a,b) == f(b,a)` exactly |
 | `bilinear` | baseline + `(Ua)⊙(Vb)` | 4d+r | `--bilinear-rank`, default 64 |
+| `no-b-bilinear` | `no-b` + `(Ua)⊙(Vb)` | 3d+r | the two modes that gained most |
 
-Only `normed*` and `bilinear` add parameters; the rest are free. `baseline` adds no
-`state_dict` keys, so checkpoints written before this flag existed still load unchanged.
+Only `normed*` and the two `bilinear` modes add parameters; the rest are free. `baseline`
+adds no `state_dict` keys, so checkpoints written before this flag existed still load
+unchanged.
+
+`no-b-bilinear` combines the two modes that gained most in the first ablation (ECAPA + mlp
++ MSE, 20,000 steps, dev UTT-SRCC against the `baseline` control): `no-b` was +0.030 on
+`spk_sim` and +0.002 on `acc_sim`, `bilinear` +0.017 and +0.030. They pull in compatible
+directions — one removes the raw reference block, the other adds a learned comparison of
+projected subspaces — so the combination keeps a route from `b` to the head while dropping
+the 256 raw dimensions that measurably were not earning their place.
 
 Two measurements motivate most of these, both on `coral_commonaccent-moe`, dev set:
 

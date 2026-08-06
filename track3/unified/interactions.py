@@ -37,6 +37,14 @@ Modes, with d = embedding dim (256 by default):
     no-b             [a, |a-b|, a*b]                        3d    drops the reference block
     symmetric        [a+b, |a-b|, a*b]                      3d    f(a,b) == f(b,a) exactly
     bilinear         baseline + (Ua) * (Vb)                 4d+r  learned compared subspaces
+    no-b-bilinear    no-b + (Ua) * (Vb)                     3d+r  the two that helped
+
+`no-b-bilinear` combines the two modes that gained most in the first ablation (ECAPA + mlp
++ MSE, 20,000 steps, dev UTT-SRCC against the `baseline` control): `no-b` was +0.030 on
+spk_sim and +0.002 on acc_sim, `bilinear` +0.017 and +0.030. They pull in compatible
+directions -- one removes the raw reference block, the other adds a learned comparison of
+projected subspaces -- so the combination keeps a route from b to the head while dropping
+the 256 raw dimensions that measurably were not earning their place.
 """
 
 import torch
@@ -45,8 +53,12 @@ import torch.nn.functional as F
 
 INTERACTIONS = [
     "baseline", "scalars", "normed", "normed-scalars",
-    "signed", "no-b", "symmetric", "bilinear",
+    "signed", "no-b", "symmetric", "bilinear", "no-b-bilinear",
 ]
+
+# Modes that drop the raw e_b block, and modes that add the learned bilinear term.
+_DROPS_B = ("no-b", "no-b-bilinear")
+_USES_BILINEAR = ("bilinear", "no-b-bilinear")
 
 
 class Interaction(nn.Module):
@@ -60,7 +72,8 @@ class Interaction(nn.Module):
         self.dim = dim
 
         n_blocks = {"baseline": 4, "scalars": 4, "normed": 4, "normed-scalars": 4,
-                    "signed": 4, "no-b": 3, "symmetric": 3, "bilinear": 4}[mode]
+                    "signed": 4, "no-b": 3, "symmetric": 3, "bilinear": 4,
+                    "no-b-bilinear": 3}[mode]
         self.out_dim = n_blocks * dim
 
         # Per-block LayerNorm. Applied to the d-wide blocks only -- never to the scalar
@@ -77,10 +90,11 @@ class Interaction(nn.Module):
             self.out_dim += 2
 
         self.bilinear_u = self.bilinear_v = None
-        if mode == "bilinear":
+        if mode in _USES_BILINEAR:
             # (Ua) * (Vb) generalises the elementwise product, which is the special case
-            # U = V = I. Appended to the baseline rather than replacing a*b, so a null
-            # result means the term is genuinely useless and not that something was lost.
+            # U = V = I. Appended rather than replacing a*b, so a null result means the
+            # term is genuinely useless and not that something was lost. In no-b-bilinear
+            # it is also the only path from b to the head besides |a-b| and a*b.
             self.bilinear_u = nn.Linear(dim, bilinear_rank, bias=False)
             self.bilinear_v = nn.Linear(dim, bilinear_rank, bias=False)
             self.out_dim += bilinear_rank
@@ -89,21 +103,21 @@ class Interaction(nn.Module):
         diff_abs = torch.abs(emb_a - emb_b)
         prod = emb_a * emb_b
 
-        if self.mode in ("baseline", "scalars", "normed", "normed-scalars", "bilinear"):
-            blocks = [emb_a, emb_b, diff_abs, prod]
+        if self.mode in _DROPS_B:
+            blocks = [emb_a, diff_abs, prod]
         elif self.mode == "signed":
             blocks = [emb_a, emb_b, emb_a - emb_b, prod]
-        elif self.mode == "no-b":
-            blocks = [emb_a, diff_abs, prod]
         elif self.mode == "symmetric":
             blocks = [emb_a + emb_b, diff_abs, prod]
+        elif self.mode in ("baseline", "scalars", "normed", "normed-scalars", "bilinear"):
+            blocks = [emb_a, emb_b, diff_abs, prod]
         else:  # pragma: no cover - guarded in __init__
             raise ValueError(self.mode)
 
         if self.norms is not None:
             blocks = [norm(block) for norm, block in zip(self.norms, blocks)]
 
-        if self.mode == "bilinear":
+        if self.mode in _USES_BILINEAR:
             blocks.append(self.bilinear_u(emb_a) * self.bilinear_v(emb_b))
 
         if self.mode in ("scalars", "normed-scalars"):

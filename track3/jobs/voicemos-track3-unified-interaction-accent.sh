@@ -14,11 +14,13 @@
 #
 #   sbatch track3/jobs/voicemos-track3-unified-interaction-accent.sh
 #
-# Eight arms, one per interaction mode. EVERYTHING else is held at the `base` arm of the
-# ECAPA ladder -- ecapa-voxceleb, mlp head, MSE, one AdamW group at 1e-3, no freeze
-# schedule, batch 16 -- so --interaction is the only variable. `baseline` is the control:
-# it is the vector the official baseline uses, so its row is the number every other row is
-# read against.
+# Nine arms, one per interaction mode, ~9 h in total. Pass a subset to run fewer:
+#   sbatch --export=ALL,MODES="no-b bilinear" --time=03:00:00 ...
+#
+# EVERYTHING except --interaction is held at the `base` arm of the ECAPA ladder --
+# ecapa-voxceleb, mlp head, MSE, one AdamW group at 1e-3, no freeze schedule, batch 16 --
+# so the interaction vector is the only variable. `baseline` is the control: it is the
+# vector the official baseline uses, so its row is what every other row is read against.
 #
 #   baseline         [a, b, |a-b|, a*b]                  1024   control
 #   scalars          baseline + [cos, ||a-b||]           1026
@@ -28,11 +30,11 @@
 #   no-b             [a, |a-b|, a*b]                      768
 #   symmetric        [a+b, |a-b|, a*b]                    768   f(a,b) == f(b,a)
 #   bilinear         baseline + (Ua)*(Vb), rank 64       1088
+#   no-b-bilinear    no-b + (Ua)*(Vb), rank 64            832   the two that helped
 #
-# ECAPA rather than ERes2NetV2 on purpose: at ~0.416 s/step the latter would make this
-# 8 x 2.3 h = 18 h per target. ECAPA runs ~0.16 s/step, so 20,000 steps is ~60 min per arm
-# and the eight fit one allocation. If a mode wins here, re-run that mode alone on the
-# stronger encoder.
+# ECAPA rather than ERes2NetV2 on purpose: at ~0.416 s/step the latter would make a full
+# nine-arm ablation 21 h per target. ECAPA runs ~0.16 s/step, so 20,000 steps is ~60 min per
+# arm. If a mode wins here, re-run that mode alone on the stronger encoder.
 #
 # NO freeze schedule, deliberately: `freeze` was the clearest loser in the ECAPA ladder on
 # both targets (SYS-SRCC 0.889 against 0.970 for `base`), and a frozen phase would delay
@@ -107,7 +109,11 @@ TRAIN_CSV=$DR/sets/train.csv
 DEV_CSV=${DEV_CSV:-$DR/sets/dev.csv}
 DEV_LABELS=${DEV_LABELS:-../baseline/data/vmc2026_track3_eval_phase_distro_v3_syn/sets/dev_with_labels.csv}
 
-MODES=${MODES:-"baseline scalars normed normed-scalars signed no-b symmetric bilinear"}
+# All nine modes. `all` is accepted as a synonym, and any subset can be passed:
+#   --export=ALL,MODES="no-b bilinear"
+ALL_MODES="baseline scalars normed normed-scalars signed no-b symmetric bilinear no-b-bilinear"
+MODES=${MODES:-"$ALL_MODES"}
+[ "$MODES" = "all" ] && MODES="$ALL_MODES"
 
 # Held fixed across every arm. This is the ladder's `base` configuration.
 ENCODER=${ENCODER:-ecapa-voxceleb}
@@ -121,8 +127,8 @@ BILINEAR_RANK=${BILINEAR_RANK:-64}
 TRAIN_STEPS=${TRAIN_STEPS:-20000}
 EVAL_STEPS=${EVAL_STEPS:-1000}
 # Denser than the CORAL jobs' 5000: those runs peaked at steps 16000-19000 and the
-# checkpoint was not kept. 10 checkpoints x ~89 MB x 8 arms is ~7 GB, which is nothing
-# against the free space here.
+# checkpoint was not kept. 10 checkpoints x ~89 MB per arm is nothing against the free
+# space here.
 SAVE_STEPS=${SAVE_STEPS:-2000}
 BEST_METRIC=${BEST_METRIC:-srcc_utt}
 
