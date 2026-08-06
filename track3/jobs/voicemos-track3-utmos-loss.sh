@@ -119,7 +119,10 @@ HEAD_LR=${HEAD_LR:-1e-3}
 TRAIN_STEPS=${TRAIN_STEPS:-4000}
 EVAL_STEPS=${EVAL_STEPS:-250}
 SAVE_STEPS=${SAVE_STEPS:-1000}
-BEST_METRIC=${BEST_METRIC:-srcc_sys}
+# Selection is on utterance-level SRCC. srcc_sys peaks early and stays flat: on the CORAL
+# runs it picked checkpoints as early as step 1000 while utterance metrics kept improving
+# to step 16000-19000, costing up to 0.08 UTT-SRCC on the checkpoint that was kept.
+BEST_METRIC=${BEST_METRIC:-srcc_utt}
 
 METRICS=(spk_sim acc_sim)
 ARMS=(mse clipped contrastive utmos utmos-g2 utmos-g5)

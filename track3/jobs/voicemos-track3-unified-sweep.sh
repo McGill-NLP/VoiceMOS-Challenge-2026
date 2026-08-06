@@ -172,7 +172,10 @@ else
 fi
 [ "$RNC_STEPS" -lt 1 ] && RNC_STEPS=1
 
-BEST_METRIC=${BEST_METRIC:-srcc_sys}
+# Selection is on utterance-level SRCC. srcc_sys peaks early and stays flat: on the CORAL
+# runs it picked checkpoints as early as step 1000 while utterance metrics kept improving
+# to step 16000-19000, costing up to 0.08 UTT-SRCC on the checkpoint that was kept.
+BEST_METRIC=${BEST_METRIC:-srcc_utt}
 
 if [ ! -f "$DEV_LABELS" ]; then
     echo "ERROR: no labelled dev set at $DEV_LABELS"; exit 1

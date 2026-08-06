@@ -126,7 +126,10 @@ FT_EVAL_STEPS=${FT_EVAL_STEPS:-250}
 
 # Dev metric that decides which checkpoint is kept as model_best_<metric>.pt.
 # System-level SRCC is the headline number for the challenge.
-BEST_METRIC=${BEST_METRIC:-srcc_sys}
+# Selection is on utterance-level SRCC. srcc_sys peaks early and stays flat: on the CORAL
+# runs it picked checkpoints as early as step 1000 while utterance metrics kept improving
+# to step 16000-19000, costing up to 0.08 UTT-SRCC on the checkpoint that was kept.
+BEST_METRIC=${BEST_METRIC:-srcc_utt}
 
 # ECAPA is 1D over time, so it is far lighter than the 2D ERes2NetV2 and the baseline's
 # batch size of 16 fits with no accumulation. Measured on an L40S (46 GB):

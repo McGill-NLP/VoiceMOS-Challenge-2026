@@ -231,6 +231,10 @@ track3/utmos-approach/**/*.pt
 track3/baseline/**/*.pt
 track3/unified/**/*.pt
 
+# TensorBoard logs
+tensorboard/
+events.out.tfevents.*
+
 # Others
 dev.ipynb
 track3/speechllm_judge/SpeechLLM-as-Judges/

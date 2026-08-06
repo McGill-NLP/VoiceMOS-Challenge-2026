@@ -11,6 +11,7 @@ branches, so they can be stacked and ablated from the command line. See
 | Freeze schedule | `--freeze-steps`, `--backbone-lr-mult` | `dev.yj/empirical`, `dev.yj-v2` |
 | Objective | `--objective mse\|corn\|coral` | `dev.ap/CORN` (`../corn-and-coral/`) |
 | Contrastive auxiliary | `--lambda-rnc` | `dev.dg/contrastive` (`../rank-n-contrast/`) |
+| Interaction vector | `--interaction` | this branch, see below |
 
 Defaults reproduce the official Baseline 2 recipe with an encoder that actually trains:
 
@@ -64,6 +65,52 @@ Two details worth knowing:
   between `floor(t)` and `ceil(t)`; `--hard-labels` rounds instead. Verified: on integer
   targets the soft losses reproduce `coral_pytorch`'s `corn_loss` and `coral_loss` to
   `0.00e+00`.
+
+## Interaction vector
+
+`--interaction` selects how the two embeddings are combined before the head. With `d` the
+embedding width (256 by default):
+
+| mode | vector | dim | notes |
+|---|---|---|---|
+| `baseline` | `[a, b, |a−b|, a⊙b]` | 4d | the official baseline (default) |
+| `scalars` | baseline + `[cos, ‖a−b‖]` | 4d+2 | similarity made explicit |
+| `normed` | LayerNorm each block, then baseline | 4d | equalises block scales |
+| `normed-scalars` | both of the above | 4d+2 | |
+| `signed` | `[a, b, a−b, a⊙b]` | 4d | keeps the direction of the difference |
+| `no-b` | `[a, |a−b|, a⊙b]` | 3d | drops the reference block |
+| `symmetric` | `[a+b, |a−b|, a⊙b]` | 3d | `f(a,b) == f(b,a)` exactly |
+| `bilinear` | baseline + `(Ua)⊙(Vb)` | 4d+r | `--bilinear-rank`, default 64 |
+
+Only `normed*` and `bilinear` add parameters; the rest are free. `baseline` adds no
+`state_dict` keys, so checkpoints written before this flag existed still load unchanged.
+
+Two measurements motivate most of these, both on `coral_commonaccent-moe`, dev set:
+
+- **The vector is role-dependent, not merely asymmetric.** Swapping the inputs moves
+  SYS-SRCC from 0.932 to **−0.164**, and averaging `f(a,b)` with `f(b,a)` costs 0.10
+  SYS-SRCC. That is not a defect to fix — `wav_a` is always the system output and `wav_b`
+  always the `sys019` reference, in train, dev and test, so `f(b,a)` is never asked for.
+  `symmetric` exists to ablate this, not because symmetry is expected to win.
+- **The reference is used less than 1024 dimensions suggest.** Substituting a wrong
+  reference from the same pool only drops SYS-SRCC from 0.932 to 0.786, so much of the
+  system-level ranking comes from `a` alone — "how degraded is this sample" — rather than
+  from any comparison. `no-b` tests how much the `b` block contributes at all.
+
+`scalars` and `normed` follow from two properties of the current vector. The embeddings
+are L2-normalised, so `sum(a⊙b)` *is* the cosine: the head has to discover a uniform sum
+over `d` dimensions to recover a feature that scores SYS-SRCC 0.809 on its own zero-shot.
+And the blocks arrive on very different scales — `a`, `b` on the unit sphere, `|a−b|` in
+[0,2], entries of `a⊙b` around `1/d` — so the product block is attenuated before the first
+`Linear` sees it.
+
+Note that `cos` and `‖a−b‖` are monotone transforms of each other under L2 normalisation
+(`‖a−b‖² = 2 − 2cos`), so `scalars` adds no information the vector lacked. The point is
+that the head no longer has to find it.
+
+Expect these to matter most with a frozen encoder: a fine-tuned 20M-parameter backbone can
+compensate for a poor interaction. For a clean read, ablate with `--freeze-encoder` first,
+which is minutes per run rather than hours.
 
 ## Freezing
 

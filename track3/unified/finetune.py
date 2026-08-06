@@ -38,6 +38,7 @@ from tqdm import tqdm
 
 from calculate_metrics import compute_metrics
 from encoders import ENCODER_REGISTRY
+from interactions import INTERACTIONS
 from model import UnifiedModel
 from objectives import NUM_CLASSES, OBJECTIVES, rnc_loss, task_loss
 
@@ -272,6 +273,12 @@ def build_parser():
     p.add_argument("--ordinal-dim", type=int, default=128, help="Trunk output width feeding the CORN/CORAL layer.")
     p.add_argument("--no-range-clipping", action="store_true", help="Disable the Tanh*2+3 output clamp (mse only).")
 
+    # -- interaction
+    p.add_argument("--interaction", type=str, default="baseline", choices=INTERACTIONS,
+                   help="How the two embeddings are combined before the head. See interactions.py.")
+    p.add_argument("--bilinear-rank", type=int, default=64,
+                   help="Rank of the learned bilinear term. Ignored unless --interaction bilinear.")
+
     # -- objective
     p.add_argument("--objective", type=str, default="mse", choices=OBJECTIVES, help="Primary training objective.")
     p.add_argument("--hard-labels", action="store_true",
@@ -400,6 +407,8 @@ def main():
         "target_metric": args.target_metric,
         "objective": args.objective,
         "head": args.head,
+        "interaction": args.interaction,
+        "bilinear_rank": args.bilinear_rank,
         "embedding_dim": args.embedding_dim,
         "hidden_dim": args.hidden_dim,
         "ordinal_dim": args.ordinal_dim,
@@ -415,6 +424,8 @@ def main():
     logging.info(
         f"Model: encoder={args.encoder}  head={args.head}"
         + (f"(experts={args.num_experts}, top_k={args.top_k})" if args.head == "moe" else "")
+        + f"  interaction={args.interaction}"
+        + (f"(rank={args.bilinear_rank})" if args.interaction == "bilinear" else "")
         + f"  objective={args.objective}"
         + ("" if args.objective == "mse" else f"(soft_labels={not args.hard_labels})")
         + (f"  +rnc(lambda={args.lambda_rnc})" if args.lambda_rnc > 0 else "")
@@ -424,6 +435,8 @@ def main():
         target_metric=args.target_metric,
         objective=args.objective,
         head_type=args.head,
+        interaction=args.interaction,
+        bilinear_rank=args.bilinear_rank,
         embedding_dim=args.embedding_dim,
         hidden_dim=args.hidden_dim,
         ordinal_dim=args.ordinal_dim,

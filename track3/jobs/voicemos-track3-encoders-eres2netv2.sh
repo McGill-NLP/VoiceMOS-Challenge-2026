@@ -120,7 +120,10 @@ FT_EVAL_STEPS=${FT_EVAL_STEPS:-250}
 
 # Dev metric that decides which checkpoint is kept as model_best_<metric>.pt.
 # System-level SRCC is the headline number for the challenge.
-BEST_METRIC=${BEST_METRIC:-srcc_sys}
+# Selection is on utterance-level SRCC. srcc_sys peaks early and stays flat: on the CORAL
+# runs it picked checkpoints as early as step 1000 while utterance metrics kept improving
+# to step 16000-19000, costing up to 0.08 UTT-SRCC on the checkpoint that was kept.
+BEST_METRIC=${BEST_METRIC:-srcc_utt}
 
 # ERes2NetV2 is a 2D CNN that runs stage 1 at full temporal resolution, so activation
 # memory scales with batch x frames. Repetitive padding stretches every clip in a batch

@@ -83,7 +83,9 @@ DEV_CSV=$DR/sets/dev.csv
 # jobs use.
 DEV_LABELS=../baseline/data/vmc2026_track3_eval_phase_distro_v3_syn/sets/dev_with_labels.csv
 VAL_NAME=$(basename "$DEV_LABELS" .csv)
-SELECT_ON=sys_srcc
+# Utterance-level SRCC; this script's vocabulary for what the unified
+# jobs call srcc_utt. See those for why sys-level selection was dropped.
+SELECT_ON=utt_srcc
 EVAL_STEPS=500
 
 # Training ECAPA rather than just the projection costs roughly 5x the memory, so

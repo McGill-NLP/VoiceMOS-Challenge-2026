@@ -21,6 +21,7 @@ import torch.nn.functional as F
 
 from encoders import build_encoder
 from heads import Head
+from interactions import Interaction
 from objectives import NUM_CLASSES, decode_score
 
 
@@ -60,6 +61,8 @@ class UnifiedModel(nn.Module):
         target_metric: str = "spk_sim",
         objective: str = "mse",
         head_type: str = "mlp",
+        interaction: str = "baseline",
+        bilinear_rank: int = 64,
         embedding_dim: int = 256,
         hidden_dim: int = 64,
         ordinal_dim: int = 128,
@@ -81,8 +84,10 @@ class UnifiedModel(nn.Module):
             encoder_name, embedding_dim, use_projection,
             cache_dir=cache_dir, encoder_checkpoint=encoder_checkpoint,
         )
-        # emb_a, emb_b, |emb_a - emb_b|, emb_a * emb_b
-        self.interaction_dim = self.encoder.final_dim * 4
+        self.interaction = Interaction(
+            self.encoder.final_dim, mode=interaction, bilinear_rank=bilinear_rank
+        )
+        self.interaction_dim = self.interaction.out_dim
 
         self.head = Head(
             in_dim=self.interaction_dim,
@@ -150,9 +155,7 @@ class UnifiedModel(nn.Module):
         outputs["emb_b"] = emb_b
         outputs["cos_sim"] = F.cosine_similarity(emb_a, emb_b, dim=-1)
 
-        interaction = torch.cat(
-            [emb_a, emb_b, torch.abs(emb_a - emb_b), emb_a * emb_b], dim=-1
-        )
+        interaction = self.interaction(emb_a, emb_b)
         # Kept on the output so the Rank-N-Contrast auxiliary can act on the same
         # feature the head consumes, which is what the RNC paper prescribes (no separate
         # projection head for the contrastive term).
@@ -173,6 +176,10 @@ def build_from_config(config, cache_dir=None):
         target_metric=config["target_metric"],
         objective=config.get("objective", "mse"),
         head_type=config.get("head", "mlp"),
+        # Defaults to "baseline" so checkpoints written before this flag existed still
+        # rebuild correctly. That mode is parameter-free, so it adds no state_dict keys.
+        interaction=config.get("interaction", "baseline"),
+        bilinear_rank=config.get("bilinear_rank", 64),
         embedding_dim=config.get("embedding_dim", 256),
         hidden_dim=config.get("hidden_dim", 64),
         ordinal_dim=config.get("ordinal_dim", 128),

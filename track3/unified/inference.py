@@ -70,6 +70,7 @@ def main():
         logging.info(
             f"Rebuilding from checkpoint config: encoder={config['encoder']} "
             f"head={config.get('head', 'mlp')} objective={config.get('objective', 'mse')} "
+            f"interaction={config.get('interaction', 'baseline')} "
             f"target={target_metric}"
         )
         model = build_from_config(config, cache_dir=args.cache_dir)

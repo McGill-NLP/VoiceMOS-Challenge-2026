@@ -199,7 +199,7 @@ python finetune.py \
     --save-steps "$SAVE_STEPS" \
     --eval-steps "$EVAL_STEPS" \
     --eval-batch-size 16 \
-    --best-metric srcc_sys \
+    --best-metric srcc_utt \
     --dev-csv "$DEV_LABELS" \
     --dev-data-root "$DR" \
     --num-workers "$NUM_WORKERS"
@@ -234,7 +234,7 @@ python finetune.py \
     --save-steps "$SAVE_STEPS" \
     --eval-steps "$EVAL_STEPS" \
     --eval-batch-size 16 \
-    --best-metric srcc_sys \
+    --best-metric srcc_utt \
     --dev-csv "$DEV_LABELS" \
     --dev-data-root "$DR" \
     --num-workers "$NUM_WORKERS"
@@ -272,7 +272,7 @@ python finetune.py \
     --save-steps "$SAVE_STEPS" \
     --eval-steps "$EVAL_STEPS" \
     --eval-batch-size 16 \
-    --best-metric srcc_sys \
+    --best-metric srcc_utt \
     --dev-csv "$DEV_LABELS" \
     --dev-data-root "$DR" \
     --num-workers "$NUM_WORKERS"
@@ -307,7 +307,7 @@ python finetune.py \
     --save-steps "$SAVE_STEPS" \
     --eval-steps "$EVAL_STEPS" \
     --eval-batch-size 16 \
-    --best-metric srcc_sys \
+    --best-metric srcc_utt \
     --dev-csv "$DEV_LABELS" \
     --dev-data-root "$DR" \
     --num-workers "$NUM_WORKERS"
