@@ -17,7 +17,7 @@ python encoders.py --list
 | `ecapa-voxceleb` | 22.1M | `speechbrain/spkrec-ecapa-voxceleb` | The baseline's encoder. Speaker verification on VoxCeleb. |
 | `commonaccent-ecapa` | 20.8M | `Jzuluaga/accent-id-commonaccent_ecapa` | ECAPA fine-tuned on CommonVoice for 16-way English accent ID. |
 | `eres2netv2` | 17.9M | `iic/speech_eres2netv2_sv_zh-cn_16k-common` | ERes2NetV2, 200k speakers. EER 0.61% VoxCeleb1-O. |
-| `eres2netv2-w24s4ep4` | ~24M | `iic/speech_eres2netv2w24s4ep4_sv_zh-cn_16k-common` | Wider ERes2NetV2 variant. |
+| `eres2netv2-w24s4ep4` | **53.5M** | `iic/speech_eres2netv2w24s4ep4_sv_zh-cn_16k-common` | Wider ERes2NetV2. Measured, not the ~24M previously guessed here: 3x `eres2netv2`, 1.065 s/step and 29.0 GiB at batch 4 x 4 accum. |
 
 Encoders compose with `+`. Each branch is L2-normalised before concatenation:
 

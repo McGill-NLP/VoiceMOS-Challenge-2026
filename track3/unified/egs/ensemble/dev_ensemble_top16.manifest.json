@@ -1,0 +1,203 @@
+{
+  "k": 16,
+  "method": "unweighted mean of raw predictions",
+  "selection": "top-K by dev UTT-SRCC, one entry per run (best checkpoint)",
+  "members": {
+    "spk_sim": [
+      {
+        "rank": 1,
+        "run": "unified/egs/w24s4ep4_mse_spk_sim",
+        "file": "unified/egs/w24s4ep4_mse_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5717
+      },
+      {
+        "rank": 2,
+        "run": "unified/egs/w24s4ep4_coral_spk_sim",
+        "file": "unified/egs/w24s4ep4_coral_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5713
+      },
+      {
+        "rank": 3,
+        "run": "unified/egs/ixenc_w24s4ep4-no-b_spk_sim",
+        "file": "unified/egs/ixenc_w24s4ep4-no-b_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5656
+      },
+      {
+        "rank": 4,
+        "run": "unified/egs/mse_eres2netv2-moe_spk_sim",
+        "file": "unified/egs/mse_eres2netv2-moe_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5631
+      },
+      {
+        "rank": 5,
+        "run": "unified/egs/ixenc_eres2netv2-bilinear_spk_sim",
+        "file": "unified/egs/ixenc_eres2netv2-bilinear_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5612
+      },
+      {
+        "rank": 6,
+        "run": "unified/egs/ix_no-b_spk_sim",
+        "file": "unified/egs/ix_no-b_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5483
+      },
+      {
+        "rank": 7,
+        "run": "unified/egs/ixenc_eres2netv2-no-b_spk_sim",
+        "file": "unified/egs/ixenc_eres2netv2-no-b_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.547
+      },
+      {
+        "rank": 8,
+        "run": "unified/egs/coral_eres2netv2-moe_spk_sim",
+        "file": "unified/egs/coral_eres2netv2-moe_spk_sim/dev_spk_sim_step20000.csv",
+        "dev_utt_srcc": 0.5467
+      },
+      {
+        "rank": 9,
+        "run": "unified/egs/mse_eres2netv2-mlp_spk_sim",
+        "file": "unified/egs/mse_eres2netv2-mlp_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5454
+      },
+      {
+        "rank": 10,
+        "run": "unified/egs/mse_commonaccent-moe_spk_sim",
+        "file": "unified/egs/mse_commonaccent-moe_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5384
+      },
+      {
+        "rank": 11,
+        "run": "unified/egs/ix_bilinear_spk_sim",
+        "file": "unified/egs/ix_bilinear_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5353
+      },
+      {
+        "rank": 12,
+        "run": "unified/egs/ix_normed_spk_sim",
+        "file": "unified/egs/ix_normed_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5289
+      },
+      {
+        "rank": 13,
+        "run": "unified/egs/coral_eres2netv2-mlp_spk_sim",
+        "file": "unified/egs/coral_eres2netv2-mlp_spk_sim/dev_spk_sim_step20000.csv",
+        "dev_utt_srcc": 0.5248
+      },
+      {
+        "rank": 14,
+        "run": "unified/egs/ix_normed-scalars_spk_sim",
+        "file": "unified/egs/ix_normed-scalars_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5238
+      },
+      {
+        "rank": 15,
+        "run": "unified/egs/ix_scalars_spk_sim",
+        "file": "unified/egs/ix_scalars_spk_sim/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5233
+      },
+      {
+        "rank": 16,
+        "run": "encoders/egs/eres2netv2_spk_sim_ftlr1e-4_full",
+        "file": "encoders/egs/eres2netv2_spk_sim_ftlr1e-4_full/dev_spk_sim.csv",
+        "dev_utt_srcc": 0.5212
+      }
+    ],
+    "acc_sim": [
+      {
+        "rank": 1,
+        "run": "unified/egs/w24s4ep4_coral_acc_sim",
+        "file": "unified/egs/w24s4ep4_coral_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.5465
+      },
+      {
+        "rank": 2,
+        "run": "unified/egs/w24s4ep4_mse_acc_sim",
+        "file": "unified/egs/w24s4ep4_mse_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.5331
+      },
+      {
+        "rank": 3,
+        "run": "unified/egs/ixenc_w24s4ep4-no-b_acc_sim",
+        "file": "unified/egs/ixenc_w24s4ep4-no-b_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.5288
+      },
+      {
+        "rank": 4,
+        "run": "unified/egs/ix_bilinear_acc_sim",
+        "file": "unified/egs/ix_bilinear_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.5227
+      },
+      {
+        "rank": 5,
+        "run": "unified/egs/mse_eres2netv2-mlp_acc_sim",
+        "file": "unified/egs/mse_eres2netv2-mlp_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.5146
+      },
+      {
+        "rank": 6,
+        "run": "unified/egs/ix_normed_acc_sim",
+        "file": "unified/egs/ix_normed_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.5118
+      },
+      {
+        "rank": 7,
+        "run": "unified/egs/ix_scalars_acc_sim",
+        "file": "unified/egs/ix_scalars_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.5106
+      },
+      {
+        "rank": 8,
+        "run": "unified/egs/ix_normed-scalars_acc_sim",
+        "file": "unified/egs/ix_normed-scalars_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.5076
+      },
+      {
+        "rank": 9,
+        "run": "unified/egs/ix_signed_acc_sim",
+        "file": "unified/egs/ix_signed_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.5068
+      },
+      {
+        "rank": 10,
+        "run": "unified/egs/ix_no-b-bilinear_acc_sim",
+        "file": "unified/egs/ix_no-b-bilinear_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.506
+      },
+      {
+        "rank": 11,
+        "run": "unified/egs/mse_commonaccent-moe_acc_sim",
+        "file": "unified/egs/mse_commonaccent-moe_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.501
+      },
+      {
+        "rank": 12,
+        "run": "unified/egs/coral_commonaccent-moe_acc_sim",
+        "file": "unified/egs/coral_commonaccent-moe_acc_sim/dev_acc_sim_step20000.csv",
+        "dev_utt_srcc": 0.4997
+      },
+      {
+        "rank": 13,
+        "run": "unified/egs/ix_no-b_acc_sim",
+        "file": "unified/egs/ix_no-b_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.4945
+      },
+      {
+        "rank": 14,
+        "run": "unified/egs/ix_baseline_acc_sim",
+        "file": "unified/egs/ix_baseline_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.4928
+      },
+      {
+        "rank": 15,
+        "run": "unified/egs/coral_commonaccent-mlp_acc_sim",
+        "file": "unified/egs/coral_commonaccent-mlp_acc_sim/dev_acc_sim_step20000.csv",
+        "dev_utt_srcc": 0.4927
+      },
+      {
+        "rank": 16,
+        "run": "unified/egs/ixenc_eres2netv2-bilinear_acc_sim",
+        "file": "unified/egs/ixenc_eres2netv2-bilinear_acc_sim/dev_acc_sim.csv",
+        "dev_utt_srcc": 0.4918
+      }
+    ]
+  }
+}

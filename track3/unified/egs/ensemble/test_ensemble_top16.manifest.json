@@ -1,0 +1,205 @@
+{
+  "k": 16,
+  "split": "test",
+  "method": "unweighted mean of raw predictions",
+  "selection": "top-16 by dev UTT-SRCC among runs with a checkpoint on disk",
+  "data_root": "/network/scratch/g/guzmand/Repositories/VoiceMOS-Challenge-2026/track3/baseline/data/vmc2026_track3_eval_phase_distro_v3_syn",
+  "members": {
+    "spk_sim": [
+      {
+        "rank": 1,
+        "run": "unified/egs/w24s4ep4_mse_spk_sim",
+        "dev_utt_srcc": 0.5717,
+        "checkpoint": "unified/egs/w24s4ep4_mse_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 2,
+        "run": "unified/egs/w24s4ep4_coral_spk_sim",
+        "dev_utt_srcc": 0.5713,
+        "checkpoint": "unified/egs/w24s4ep4_coral_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 3,
+        "run": "unified/egs/ixenc_w24s4ep4-no-b_spk_sim",
+        "dev_utt_srcc": 0.5656,
+        "checkpoint": "unified/egs/ixenc_w24s4ep4-no-b_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 4,
+        "run": "unified/egs/mse_eres2netv2-moe_spk_sim",
+        "dev_utt_srcc": 0.5631,
+        "checkpoint": "unified/egs/mse_eres2netv2-moe_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 5,
+        "run": "unified/egs/ixenc_eres2netv2-bilinear_spk_sim",
+        "dev_utt_srcc": 0.5612,
+        "checkpoint": "unified/egs/ixenc_eres2netv2-bilinear_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 6,
+        "run": "unified/egs/ix_no-b_spk_sim",
+        "dev_utt_srcc": 0.5483,
+        "checkpoint": "unified/egs/ix_no-b_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 7,
+        "run": "unified/egs/ixenc_eres2netv2-no-b_spk_sim",
+        "dev_utt_srcc": 0.547,
+        "checkpoint": "unified/egs/ixenc_eres2netv2-no-b_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 8,
+        "run": "unified/egs/coral_eres2netv2-moe_spk_sim",
+        "dev_utt_srcc": 0.5467,
+        "checkpoint": "unified/egs/coral_eres2netv2-moe_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 9,
+        "run": "unified/egs/mse_eres2netv2-mlp_spk_sim",
+        "dev_utt_srcc": 0.5454,
+        "checkpoint": "unified/egs/mse_eres2netv2-mlp_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 10,
+        "run": "unified/egs/mse_commonaccent-moe_spk_sim",
+        "dev_utt_srcc": 0.5384,
+        "checkpoint": "unified/egs/mse_commonaccent-moe_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 11,
+        "run": "unified/egs/ix_bilinear_spk_sim",
+        "dev_utt_srcc": 0.5353,
+        "checkpoint": "unified/egs/ix_bilinear_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 12,
+        "run": "unified/egs/ix_normed_spk_sim",
+        "dev_utt_srcc": 0.5289,
+        "checkpoint": "unified/egs/ix_normed_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 13,
+        "run": "unified/egs/coral_eres2netv2-mlp_spk_sim",
+        "dev_utt_srcc": 0.5248,
+        "checkpoint": "unified/egs/coral_eres2netv2-mlp_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 14,
+        "run": "unified/egs/ix_normed-scalars_spk_sim",
+        "dev_utt_srcc": 0.5238,
+        "checkpoint": "unified/egs/ix_normed-scalars_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 15,
+        "run": "unified/egs/ix_scalars_spk_sim",
+        "dev_utt_srcc": 0.5233,
+        "checkpoint": "unified/egs/ix_scalars_spk_sim/model_best_spk_sim.pt"
+      },
+      {
+        "rank": 16,
+        "run": "unified/egs/coral_commonaccent-moe_spk_sim",
+        "dev_utt_srcc": 0.5188,
+        "checkpoint": "unified/egs/coral_commonaccent-moe_spk_sim/model_best_spk_sim.pt"
+      }
+    ],
+    "acc_sim": [
+      {
+        "rank": 1,
+        "run": "unified/egs/w24s4ep4_coral_acc_sim",
+        "dev_utt_srcc": 0.5465,
+        "checkpoint": "unified/egs/w24s4ep4_coral_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 2,
+        "run": "unified/egs/w24s4ep4_mse_acc_sim",
+        "dev_utt_srcc": 0.5331,
+        "checkpoint": "unified/egs/w24s4ep4_mse_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 3,
+        "run": "unified/egs/ixenc_w24s4ep4-no-b_acc_sim",
+        "dev_utt_srcc": 0.5288,
+        "checkpoint": "unified/egs/ixenc_w24s4ep4-no-b_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 4,
+        "run": "unified/egs/ix_bilinear_acc_sim",
+        "dev_utt_srcc": 0.5227,
+        "checkpoint": "unified/egs/ix_bilinear_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 5,
+        "run": "unified/egs/mse_eres2netv2-mlp_acc_sim",
+        "dev_utt_srcc": 0.5146,
+        "checkpoint": "unified/egs/mse_eres2netv2-mlp_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 6,
+        "run": "unified/egs/ix_normed_acc_sim",
+        "dev_utt_srcc": 0.5118,
+        "checkpoint": "unified/egs/ix_normed_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 7,
+        "run": "unified/egs/ix_scalars_acc_sim",
+        "dev_utt_srcc": 0.5106,
+        "checkpoint": "unified/egs/ix_scalars_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 8,
+        "run": "unified/egs/ix_normed-scalars_acc_sim",
+        "dev_utt_srcc": 0.5076,
+        "checkpoint": "unified/egs/ix_normed-scalars_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 9,
+        "run": "unified/egs/ix_signed_acc_sim",
+        "dev_utt_srcc": 0.5068,
+        "checkpoint": "unified/egs/ix_signed_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 10,
+        "run": "unified/egs/ix_no-b-bilinear_acc_sim",
+        "dev_utt_srcc": 0.506,
+        "checkpoint": "unified/egs/ix_no-b-bilinear_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 11,
+        "run": "unified/egs/mse_commonaccent-moe_acc_sim",
+        "dev_utt_srcc": 0.501,
+        "checkpoint": "unified/egs/mse_commonaccent-moe_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 12,
+        "run": "unified/egs/coral_commonaccent-moe_acc_sim",
+        "dev_utt_srcc": 0.4997,
+        "checkpoint": "unified/egs/coral_commonaccent-moe_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 13,
+        "run": "unified/egs/ix_no-b_acc_sim",
+        "dev_utt_srcc": 0.4945,
+        "checkpoint": "unified/egs/ix_no-b_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 14,
+        "run": "unified/egs/ix_baseline_acc_sim",
+        "dev_utt_srcc": 0.4928,
+        "checkpoint": "unified/egs/ix_baseline_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 15,
+        "run": "unified/egs/coral_commonaccent-mlp_acc_sim",
+        "dev_utt_srcc": 0.4927,
+        "checkpoint": "unified/egs/coral_commonaccent-mlp_acc_sim/model_best_acc_sim.pt"
+      },
+      {
+        "rank": 16,
+        "run": "unified/egs/ixenc_eres2netv2-bilinear_acc_sim",
+        "dev_utt_srcc": 0.4918,
+        "checkpoint": "unified/egs/ixenc_eres2netv2-bilinear_acc_sim/model_best_acc_sim.pt"
+      }
+    ]
+  }
+}

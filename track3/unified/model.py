@@ -72,6 +72,9 @@ class UnifiedModel(nn.Module):
         range_clipping: bool = True,
         dropout: float = 0.3,
         use_projection: bool = True,
+        num_listeners: int = 0,
+        listener_emb_dim: int = 16,
+        listener_dropout: float = 0.5,
         cache_dir: str = None,
         encoder_checkpoint: str = None,
     ):
@@ -79,6 +82,7 @@ class UnifiedModel(nn.Module):
         self.target_metric = target_metric
         self.objective = objective
         self.num_classes = num_classes
+        self.listener_dropout = listener_dropout
 
         self.encoder = SpeechEncoder(
             encoder_name, embedding_dim, use_projection,
@@ -101,6 +105,30 @@ class UnifiedModel(nn.Module):
             range_clipping=range_clipping,
             dropout=dropout,
         )
+
+        # Listener modelling (UTMOS / MBNet style). The head above predicts the
+        # listener-INDEPENDENT consensus; this one predicts a per-listener offset from it.
+        # Its purpose is not to be used at test time -- it is to stop the consensus head
+        # having to explain rater disagreement, so it can fit the signal instead of the
+        # noise. At inference no listener is passed and only the consensus head runs, which
+        # is what makes this usable on test.csv, where there is no listener column.
+        self.use_listener_bias = num_listeners > 0
+        if self.use_listener_bias:
+            # index 0 is a reserved "unknown listener" slot, used by --listener-dropout and
+            # by any listener_id not seen during training.
+            self.listener_emb = nn.Embedding(num_listeners + 1, listener_emb_dim, padding_idx=0)
+            # Always a SCALAR offset, whatever the objective. For an ordinal objective it
+            # is added to every threshold logit, which is the classical per-rater intercept
+            # and keeps CORAL's thresholds ordered -- a per-threshold offset would destroy
+            # the rank consistency its architecture exists to guarantee.
+            self.bias_head = Head(
+                in_dim=self.interaction_dim + listener_emb_dim,
+                objective="mse",          # i.e. trunk -> 1 scalar
+                head_type="mlp",          # the offset is a small correction; MoE is overkill
+                hidden_dim=hidden_dim,
+                range_clipping=False,     # an offset must be free to be negative
+                dropout=dropout,
+            )
 
         # Backbones arrive with grads enabled; the two-phase schedule drives this.
         self._encoder_trainable = True
@@ -143,7 +171,7 @@ class UnifiedModel(nn.Module):
         return self
 
     # -- forward ------------------------------------------------------------
-    def forward(self, wav_a, wav_b=None, len_a=None, len_b=None):
+    def forward(self, wav_a, wav_b=None, len_a=None, len_b=None, listener_idx=None):
         outputs = {}
         emb_a = self.encoder(wav_a, len_a)
         outputs["emb_a"] = emb_a
@@ -162,8 +190,25 @@ class UnifiedModel(nn.Module):
         outputs["interaction"] = interaction
 
         raw, aux_loss = self.head(interaction)
-        outputs["raw"] = raw
+        outputs["raw_mean"] = raw
         outputs["moe_aux_loss"] = aux_loss
+        outputs[f"{self.target_metric}_mean"] = decode_score(self.objective, raw, self.num_classes)
+
+        # listener_idx is None at inference and on the dev set, which carries no listener
+        # column, so `raw` stays the consensus prediction and nothing below runs.
+        if self.use_listener_bias and listener_idx is not None:
+            if self.training and self.listener_dropout > 0:
+                keep = torch.rand_like(listener_idx, dtype=torch.float) >= self.listener_dropout
+                listener_idx = torch.where(keep, listener_idx, torch.zeros_like(listener_idx))
+            bias, _ = self.bias_head(
+                torch.cat([interaction, self.listener_emb(listener_idx)], dim=-1)
+            )
+            # raw is [B] for mse and [B, K-1] for the ordinal objectives; unsqueeze so the
+            # single intercept shifts every threshold by the same amount.
+            raw = raw + (bias if raw.dim() == 1 else bias.unsqueeze(-1))
+            outputs["raw_bias"] = bias
+
+        outputs["raw"] = raw
         # The continuous 1..5 prediction, whatever the objective.
         outputs[self.target_metric] = decode_score(self.objective, raw, self.num_classes)
         return outputs
@@ -187,5 +232,11 @@ def build_from_config(config, cache_dir=None):
         num_experts=config.get("num_experts", 2),
         top_k=config.get("top_k", None),
         range_clipping=config.get("range_clipping", True),
+        # The listener vocabulary is stored IN the checkpoint config, not in a side file,
+        # so a checkpoint stays self-contained. Only its size matters for rebuilding: at
+        # inference no listener is passed and the bias head never runs.
+        num_listeners=len(config.get("listener2idx") or {}),
+        listener_emb_dim=config.get("listener_emb_dim", 16),
+        listener_dropout=config.get("listener_dropout", 0.5),
         cache_dir=cache_dir,
     )

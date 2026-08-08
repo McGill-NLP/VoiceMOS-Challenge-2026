@@ -49,27 +49,67 @@ except ImportError:  # tensorboard is optional -- a missing dep must not kill a 
 
 
 class SimilarityDataset(Dataset):
-    def __init__(self, data_root, data_rows, target_metric, keep_system_id=False):
+    """Pairs with their target score.
+
+    Two modes. By default the listener-wise rows are averaged into one score per pair,
+    which is what the baseline trains on. With `keep_listeners`, every raw rating survives
+    as its own example and carries both the individual rating and the pair's mean, so a
+    listener-bias model can fit the offset and the consensus at once. That changes what a
+    step means: 13,687 rows rather than 2,800 pairs, so 20,000 steps at batch 16 is ~23
+    epochs instead of ~114.
+    """
+
+    def __init__(self, data_root, data_rows, target_metric, keep_system_id=False,
+                 keep_listeners=False, listener2idx=None):
         self.data_root = data_root
         self.target_metric = target_metric
         # System-level metrics need the system_id to survive collation. Off during
         # training, where it is unused.
         self.keep_system_id = keep_system_id
+        self.keep_listeners = keep_listeners
 
-        aggregated_data = {}
+        pair_scores = defaultdict(list)
         for row in data_rows:
-            pair_key = (row["wav_a_path"], row["wav_b_path"])
-            if pair_key not in aggregated_data:
-                aggregated_data[pair_key] = row.copy()
-                aggregated_data[pair_key][target_metric] = []
-            aggregated_data[pair_key][target_metric].append(float(row[target_metric]))
+            pair_scores[(row["wav_a_path"], row["wav_b_path"])].append(float(row[target_metric]))
+        pair_mean = {k: sum(v) / len(v) for k, v in pair_scores.items()}
 
-        self.data_rows = []
-        for _pair_key, row_data in aggregated_data.items():
-            scores = row_data[target_metric]
-            row_data[target_metric] = sum(scores) / len(scores)
-            if "listener_id" in row_data:
-                del row_data["listener_id"]
+        if keep_listeners:
+            if not any("listener_id" in r for r in data_rows):
+                raise SystemExit(
+                    "keep_listeners was requested but the CSV has no listener_id column. "
+                    "Listener modelling needs the listener-wise sets/train.csv, not a "
+                    "pre-averaged split."
+                )
+            if listener2idx is None:
+                # 0 is reserved for "unknown", used by --listener-dropout and by any
+                # listener unseen at training time.
+                listeners = sorted({r["listener_id"] for r in data_rows if r.get("listener_id")})
+                listener2idx = {l: i + 1 for i, l in enumerate(listeners)}
+            self.listener2idx = listener2idx
+
+            self.data_rows = []
+            for row in data_rows:
+                item = row.copy()
+                item[target_metric] = float(row[target_metric])
+                item[f"{target_metric}_mean"] = pair_mean[(row["wav_a_path"], row["wav_b_path"])]
+                item["listener_idx"] = listener2idx.get(row.get("listener_id"), 0)
+                self.data_rows.append(item)
+            logging.info(
+                f"Kept {len(self.data_rows)} listener-wise rows over "
+                f"{len(pair_mean)} unique pairs, {len(listener2idx)} listeners."
+            )
+            return
+
+        self.listener2idx = {}
+        seen, self.data_rows = set(), []
+        for row in data_rows:
+            key = (row["wav_a_path"], row["wav_b_path"])
+            if key in seen:
+                continue
+            seen.add(key)
+            row_data = row.copy()
+            row_data[target_metric] = pair_mean[key]
+            row_data.pop("listener_id", None)
             self.data_rows.append(row_data)
 
         logging.info(
@@ -95,6 +135,9 @@ class SimilarityDataset(Dataset):
         }
         if self.keep_system_id and "system_id" in row:
             item["system_id"] = row["system_id"]
+        if self.keep_listeners:
+            item["listener_idx"] = row["listener_idx"]
+            item[f"{self.target_metric}_mean"] = row[f"{self.target_metric}_mean"]
         return item
 
 
@@ -143,8 +186,14 @@ class SimilarityCollater:
         if "system_id" in all_keys:
             batch_dict["system_ids"] = [sorted_batch[i]["system_id"] for i in range(bs)]
 
+        if "listener_idx" in all_keys:
+            # long, not float32: it indexes an nn.Embedding.
+            batch_dict["listener_idx"] = torch.tensor(
+                [item["listener_idx"] for item in sorted_batch], dtype=torch.long
+            )
+
         ignore_keys = ["wav_path", "wav_a_path", "wav_b_path", "wav_a", "wav_b",
-                       "system_id", "sample_id", "listener_id"]
+                       "system_id", "sample_id", "listener_id", "listener_idx"]
         for key in all_keys:
             if key in ignore_keys:
                 continue
@@ -289,6 +338,18 @@ def build_parser():
     p.add_argument("--rnc-label-diff", type=str, default="l1", choices=["l1", "l2"], help="RNC label distance.")
     p.add_argument("--rnc-feature-sim", type=str, default="l2", choices=["l1", "l2", "cosine"], help="RNC feature similarity.")
 
+    # -- listener modelling
+    p.add_argument("--use-listener-bias", action="store_true",
+                   help="Train on the listener-wise rows with a per-listener offset head. The "
+                        "consensus head alone is used at inference, so no listener column is "
+                        "needed on dev or test.")
+    p.add_argument("--listener-emb-dim", type=int, default=16, help="Listener embedding width.")
+    p.add_argument("--listener-dropout", type=float, default=0.5,
+                   help="Probability of replacing the listener with the unknown slot during "
+                        "training, so the consensus head stays usable standalone.")
+    p.add_argument("--lambda-mean", type=float, default=1.0,
+                   help="Weight on the consensus head's loss against the per-pair mean.")
+
     # -- freezing schedule
     p.add_argument("--freeze-steps", type=int, default=0,
                    help="Keep the backbone frozen for the first N optimizer steps, then unfreeze. 0 trains it from step 1.")
@@ -377,7 +438,11 @@ def main():
     logging.info(f"Loaded {len(train_data)} training samples.")
 
     collater = SimilarityCollater(padding_mode="repetitive")
-    train_dataset = SimilarityDataset(args.data_root, train_data, args.target_metric)
+    train_dataset = SimilarityDataset(args.data_root, train_data, args.target_metric,
+                                      keep_listeners=args.use_listener_bias)
+    # The vocabulary lives in the checkpoint config, so a checkpoint is self-contained and
+    # inference.py needs no side file to rebuild the embedding table.
+    config_listeners = train_dataset.listener2idx
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collater,
         num_workers=args.num_workers, drop_last=True,
@@ -417,9 +482,12 @@ def main():
         "top_k": args.top_k,
         "range_clipping": not args.no_range_clipping,
         "soft_labels": not args.hard_labels,
+        "listener_emb_dim": args.listener_emb_dim,
+        "listener_dropout": args.listener_dropout,
         "lambda_rnc": args.lambda_rnc,
         "freeze_steps": args.freeze_steps,
         "freeze_encoder": args.freeze_encoder,
+        "listener2idx": config_listeners,
     }
     logging.info(
         f"Model: encoder={args.encoder}  head={args.head}"
@@ -429,6 +497,9 @@ def main():
         + f"  objective={args.objective}"
         + ("" if args.objective == "mse" else f"(soft_labels={not args.hard_labels})")
         + (f"  +rnc(lambda={args.lambda_rnc})" if args.lambda_rnc > 0 else "")
+        + (f"  +listener-bias({len(config_listeners)} listeners, "
+           f"dropout={args.listener_dropout}, lambda_mean={args.lambda_mean})"
+           if args.use_listener_bias else "")
     )
     model = UnifiedModel(
         encoder_name=args.encoder,
@@ -443,6 +514,9 @@ def main():
         num_experts=args.num_experts,
         top_k=args.top_k,
         range_clipping=not args.no_range_clipping,
+        num_listeners=len(train_dataset.listener2idx),
+        listener_emb_dim=args.listener_emb_dim,
+        listener_dropout=args.listener_dropout,
         cache_dir=args.cache_dir,
         encoder_checkpoint=args.encoder_checkpoint,
     )
@@ -509,14 +583,14 @@ def main():
     # 5. Training
     model.train()
     global_step, forward_steps = 0, 0
-    run_task, run_rnc, run_aux = 0.0, 0.0, 0.0
+    run_task, run_rnc, run_aux, run_mean = 0.0, 0.0, 0.0, 0.0
 
     log_path = os.path.join(args.outdir, f"dev_log_{args.target_metric}.csv")
     log_file, log_writer, best_score = None, None, None
     if dev_loader is not None:
         log_file = open(log_path, "w", newline="", encoding="utf-8")
         log_writer = csv.writer(log_file)
-        log_writer.writerow(["step", "train_task", "train_rnc", "train_moe_aux"] + METRIC_KEYS)
+        log_writer.writerow(["step", "train_task", "train_rnc", "train_moe_aux", "train_consensus"] + METRIC_KEYS)
 
     def run_eval(step, losses, track_best=True):
         nonlocal best_score
@@ -563,7 +637,7 @@ def main():
     if dev_loader is not None:
         # Step 0 is the untrained-head reference every later number is read against.
         # Excluded from best tracking: a random head can score well by chance.
-        run_eval(0, (float("nan"),) * 3, track_best=False)
+        run_eval(0, (float("nan"),) * 4, track_best=False)
 
     while global_step < args.train_steps:
         for batch in train_loader:
@@ -574,12 +648,24 @@ def main():
             wav_b, len_b = batch["wav_b"].to(device), batch["wav_b_lengths"].to(device)
             targets = batch[args.target_metric].to(device)
 
-            outputs = model(wav_a, wav_b, len_a, len_b)
+            listener_idx = batch["listener_idx"].to(device) if args.use_listener_bias else None
+            outputs = model(wav_a, wav_b, len_a, len_b, listener_idx=listener_idx)
 
+            # With listener bias, `targets` is this listener's own rating and outputs["raw"]
+            # is consensus + that listener's offset; the consensus head is supervised
+            # separately against the per-pair mean. Without it, both are the pair mean and
+            # the second term is skipped.
             primary = task_loss(args.objective, outputs["raw"], targets,
                                 soft_labels=not args.hard_labels, num_classes=NUM_CLASSES)
             loss = primary
             run_task += float(primary.item())
+
+            if args.use_listener_bias:
+                mean_loss = task_loss(args.objective, outputs["raw_mean"],
+                                      batch[f"{args.target_metric}_mean"].to(device),
+                                      soft_labels=not args.hard_labels, num_classes=NUM_CLASSES)
+                loss = loss + args.lambda_mean * mean_loss
+                run_mean += float(mean_loss.item())
 
             if args.lambda_rnc > 0:
                 rnc = rnc_loss(
@@ -609,12 +695,13 @@ def main():
 
                 losses = (run_task / args.accumulate_steps,
                           run_rnc / args.accumulate_steps,
-                          run_aux / args.accumulate_steps)
+                          run_aux / args.accumulate_steps,
+                          run_mean / args.accumulate_steps)
                 postfix = {"task": f"{losses[0]:.4f}"}
                 if args.lambda_rnc > 0:
                     postfix["rnc"] = f"{losses[1]:.4f}"
                 pbar.set_postfix(postfix)
-                run_task = run_rnc = run_aux = 0.0
+                run_task = run_rnc = run_aux = run_mean = 0.0
 
                 if writer is not None and (global_step % args.log_every == 0 or global_step == 1):
                     writer.add_scalar("train/task_loss", losses[0], global_step)
@@ -624,6 +711,8 @@ def main():
                                           losses[0] + args.lambda_rnc * losses[1], global_step)
                     if args.head == "moe":
                         writer.add_scalar("train/moe_aux_loss", losses[2], global_step)
+                    if args.use_listener_bias:
+                        writer.add_scalar("train/consensus_loss", losses[3], global_step)
                     writer.add_scalar("train/grad_norm", float(grad_norm), global_step)
                     for gi, group in enumerate(optimizer.param_groups):
                         writer.add_scalar(f"train/lr_group{gi}", group["lr"], global_step)
@@ -658,7 +747,7 @@ def main():
 
     if dev_loader is not None:
         if global_step % args.eval_steps != 0:
-            run_eval(global_step, (float("nan"),) * 3)
+            run_eval(global_step, (float("nan"),) * 4)
         logging.info(f"Dev history written to {log_path}")
         if best_score is not None:
             logging.info(

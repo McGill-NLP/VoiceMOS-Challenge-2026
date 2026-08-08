@@ -308,7 +308,7 @@ ENCODER_REGISTRY = {
             ),
         ],
         "embedding_dim": 192,
-        "description": "Wider ERes2NetV2 (w24s4ep4) trained on 200k speakers.",
+        "description": "Wider ERes2NetV2 (w24s4ep4), 53.5M params, 200k speakers. 3x eres2netv2; measured 1.065 s/step and 29.0 GiB at batch 4 x 4 accum.",
     },
 }
 
