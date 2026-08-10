@@ -14,6 +14,18 @@
 #
 #   sbatch track3/jobs/weak/voicemos-track3-weak-phase1.sh
 #
+# SUPERSEDED FOR REPRODUCTION -- KEPT FOR THE RECORD. This is the EXPLORATORY sweep: all five
+# learner families on all 13 feature files (260 models, 6 h) to build the candidate pool and
+# rank it. It runs WITH PCA-128 on the SSL embeddings, because it predates the finding that
+# PCA costs +0.05 to +0.29 per configuration, and its output tree egs/weak/ is the PCA'd pool
+# that scored 0.609 / 0.577. Re-running it reproduces those superseded numbers.
+#
+# To rebuild the SHIPPED system (0.623 / 0.603) use instead:
+#   voicemos-track3-weak-ensemble-train.sh       fitted on train, dev held out
+#   voicemos-track3-weak-ensemble-traindev.sh    fitted on train+dev
+# Those fit only the 84 models the 16 frozen members need, with PCA disabled, and they write
+# the submission CSVs. Add `--pca-threshold 99999` below to make this job PCA-free too.
+#
 # WHAT THIS ANSWERS. The deep pool is stuck at a mean pairwise residual correlation of ~0.92,
 # and ensemble gain on this dev set tracks that number almost linearly:
 #
