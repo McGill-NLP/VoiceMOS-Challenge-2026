@@ -102,6 +102,11 @@ def main():
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--features", nargs="+", required=True,
                    help=".npz files from extract_features.py (globs allowed).")
+    p.add_argument("--train-csv", default=TRAIN_CSV,
+                   help="Fitting set. Point at sets/train_plus_dev.csv to train on train+dev "
+                        "(allowed by the challenge). When dev is contained in this file the "
+                        "reported dev score becomes in-sample and is flagged as such -- there "
+                        "is then no held-out set left, so members cannot be re-selected.")
     p.add_argument("--targets", nargs="+", default=["spk_sim", "acc_sim"])
     p.add_argument("--feature-sets", nargs="+", default=["full", "compact"])
     p.add_argument("--learners", nargs="+", default=list(LEARNERS))
@@ -122,12 +127,21 @@ def main():
     preds_dir = os.path.join(args.outdir, "preds")
     os.makedirs(preds_dir, exist_ok=True)
 
-    train_pairs = read_pairs(TRAIN_CSV)
+    train_pairs = read_pairs(args.train_csv)
     dev_pairs = read_pairs(DEV_CSV)
     test_pairs = read_pairs(TEST_CSV, metrics=())
     groups = np.array([p["system_id"] for p in train_pairs])
     logging.info(f"{len(train_pairs)} train pairs over {len(set(groups))} systems, "
-                 f"{len(dev_pairs)} dev, {len(test_pairs)} test")
+                 f"{len(dev_pairs)} dev, {len(test_pairs)} test  [{args.train_csv}]")
+
+    # Detected from the data rather than from a flag, so a combined CSV under any name is
+    # caught. If every dev pair is already in the fitting set, the dev score below is an
+    # in-sample fit and must not be compared against the held-out numbers from earlier runs.
+    train_keys = {(p["wav_a_path"], p["wav_b_path"]) for p in train_pairs}
+    dev_in_train = all((p["wav_a_path"], p["wav_b_path"]) in train_keys for p in dev_pairs)
+    if dev_in_train:
+        logging.warning("dev is CONTAINED IN the fitting set: reported dev_srcc is IN-SAMPLE, "
+                        "not a held-out estimate, and no set remains for member selection.")
 
     manifest_path = os.path.join(args.outdir, "stage1_manifest.jsonl")
     done = set()
@@ -181,13 +195,17 @@ def main():
                         rec = {"run": run, "encoder": enc, "feature_set": fset,
                                "learner": lname, "metric": metric, "params": params,
                                "n_features": int(Xtr.shape[1]), "pca_dim": pca_dim,
+                               "train_csv": args.train_csv, "n_train_pairs": len(train_pairs),
+                               "dev_in_train": dev_in_train,
                                "cv_srcc": round(float(cv_srcc), 4),
                                "dev_srcc": round(float(srcc(ytrue, dev_pred)), 4),
                                "seconds": round(time.time() - t0, 1)}
                         manifest.write(json.dumps(rec) + "\n")
                         manifest.flush()
                         logging.info(f"  {run}: cv_srcc={rec['cv_srcc']:.3f} "
-                                     f"dev_srcc={rec['dev_srcc']:.3f} ({rec['seconds']}s) {params}")
+                                     f"dev_srcc={rec['dev_srcc']:.3f}"
+                                     f"{' [IN-SAMPLE]' if dev_in_train else ''} "
+                                     f"({rec['seconds']}s) {params}")
 
     logging.info(f"manifest -> {manifest_path}")
 
