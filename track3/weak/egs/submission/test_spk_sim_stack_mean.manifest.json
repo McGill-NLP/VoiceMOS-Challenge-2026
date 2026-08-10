@@ -1,0 +1,28 @@
+{
+  "metric": "spk_sim",
+  "method": "mean",
+  "selection": "top-K per pool by dev UTT-SRCC",
+  "evaluation": "GroupKFold(5) by system_id on dev, out-of-fold",
+  "oof_utt_srcc": 0.6085,
+  "refit": "weights refitted on all 600 dev pairs for the submission",
+  "alpha": null,
+  "weights": null,
+  "members": [
+    "deep::eres2netv2-w24s4ep4-mse-baseline",
+    "deep::eres2netv2-w24s4ep4-mse-bilinear",
+    "deep::eres2netv2-w24s4ep4-coral-baseline",
+    "deep::eres2netv2-coral-baseline",
+    "deep::eres2netv2-mse-bilinear",
+    "deep::eres2netv2-w24s4ep4-coral-bilinear",
+    "deep::eres2netv2-coral-bilinear",
+    "deep::eres2netv2-mse-baseline",
+    "weak::eres2netv2__full__ksvr",
+    "weak::eres2netv2__full__ridge",
+    "weak::WAV2VEC2_XLSR_300M_l4__full__ridge",
+    "weak::eres2netv2__full__hgb",
+    "weak::eres2netv2-w24s4ep4__full__ksvr",
+    "weak::WAV2VEC2_XLSR_300M_l4__full__hgb",
+    "weak::eres2netv2-w24s4ep4__full__hgb",
+    "weak::WAVLM_LARGE_l4__full__ridge"
+  ]
+}

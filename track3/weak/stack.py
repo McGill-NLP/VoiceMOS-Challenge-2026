@@ -224,6 +224,10 @@ def main():
     p.add_argument("--n-splits", type=int, default=5)
     p.add_argument("--ridge-alpha", type=float, default=100.0)
     p.add_argument("--write-test", default="", help="Directory for the test submission CSV.")
+    p.add_argument("--write-dev", default="",
+                   help="Directory for the chosen method's OUT-OF-FOLD dev predictions. These "
+                        "are the predictions the reported dev metrics come from, so they are "
+                        "the ones to quote or analyse -- not an in-sample refit.")
     p.add_argument("--require-test", action="store_true",
                    help="Only admit members that also have test predictions.")
     args = p.parse_args()
@@ -294,6 +298,26 @@ def main():
             d.append(srcc(y[s], oof_scores[m][s]) - srcc(y[s], deep_only[s]))
         lo, hi = np.percentile(d, [2.5, 97.5])
         print(f"    {m:<12} minus deep-only: {np.mean(d):+.3f}  95% CI [{lo:+.3f}, {hi:+.3f}]")
+
+    # ---- dev predictions of the chosen method ---------------------------------------
+    # Out-of-fold, not the in-sample refit: every row here was predicted by a combiner that
+    # never saw that row's system, so these are exactly the numbers printed above and are
+    # safe to quote. Written for both the winner and the plain mean, since the mean is the
+    # zero-parameter baseline any reported gain should be measured against.
+    if args.write_dev:
+        os.makedirs(args.write_dev, exist_ok=True)
+        for name in dict.fromkeys([best, "mean"]):
+            if name not in oof_scores:
+                continue
+            out = os.path.join(args.write_dev, f"dev_{metric}_stack_{name}_oof.csv")
+            with open(out, "w", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                w.writerow(["system_id", "utterance_id", "wav_a_path", "wav_b_path",
+                            f"pred_{metric}"])
+                for r, v in zip(dev_rows, np.clip(oof_scores[name], 1.0, 5.0)):
+                    w.writerow([r["system_id"], r["utterance_id"],
+                                r["wav_a_path"], r["wav_b_path"], v])
+            print(f"  wrote {out}  (out-of-fold, UTT-SRCC {srcc(y, oof_scores[name]):.3f})")
 
     # ---- refit on all of dev and write the submission -------------------------------
     if args.write_test:

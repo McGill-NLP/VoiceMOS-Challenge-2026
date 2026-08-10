@@ -1,0 +1,34 @@
+{
+  "metric": "acc_sim",
+  "method": "nnls",
+  "selection": "top-K per pool by dev UTT-SRCC",
+  "evaluation": "GroupKFold(5) by system_id on dev, out-of-fold",
+  "oof_utt_srcc": 0.5854,
+  "refit": "weights refitted on all 600 dev pairs for the submission",
+  "alpha": null,
+  "weights": {
+    "deep": 0.3197,
+    "weak:WAV2VEC2_XLSR_300M_l4": 0.2589,
+    "weak:commonaccent-ecapa": 0.2829,
+    "weak:ecapa-voxceleb": 0.1385,
+    "weak:eres2netv2": 0.0
+  },
+  "members": [
+    "deep::eres2netv2-w24s4ep4-coral-bilinear",
+    "deep::eres2netv2-w24s4ep4-coral-baseline",
+    "deep::eres2netv2-w24s4ep4-mse-bilinear",
+    "deep::eres2netv2-w24s4ep4-mse-baseline",
+    "deep::ecapa-voxceleb-coral-bilinear",
+    "deep::eres2netv2-coral-baseline",
+    "deep::commonaccent-ecapa-coral-bilinear",
+    "deep::ecapa-voxceleb-mse-bilinear",
+    "weak::WAV2VEC2_XLSR_300M_l4__full__hgb",
+    "weak::ecapa-voxceleb__full__ridge",
+    "weak::commonaccent-ecapa__full__hgb",
+    "weak::ecapa-voxceleb__full__ksvr",
+    "weak::ecapa-voxceleb__compact__hgb",
+    "weak::ecapa-voxceleb__full__hgb",
+    "weak::eres2netv2__full__hgb",
+    "weak::eres2netv2__full__ksvr"
+  ]
+}
