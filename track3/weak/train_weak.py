@@ -37,7 +37,7 @@ from sklearn.linear_model import Ridge
 from sklearn.model_selection import GroupKFold
 from sklearn.svm import SVR, LinearSVR
 
-from features import PairFeaturizer, load_embeddings, read_pairs
+from features import PairFeaturizer, load_embeddings, read_pairs, read_rating_rows
 
 TRAIN_ROOT = "../baseline/data/vmc2026_track3_train_phase_distro_v3_syn"
 EVAL_ROOT = "../baseline/data/vmc2026_track3_eval_phase_distro_v3_syn"
@@ -113,6 +113,11 @@ def main():
     p.add_argument("--pca-threshold", type=int, default=256,
                    help="Embeddings wider than this are PCA-reduced to --pca-dim first.")
     p.add_argument("--pca-dim", type=int, default=128)
+    p.add_argument("--per-rating", action="store_true",
+                   help="Fit on individual listener ratings (13,687 rows) instead of per-pair "
+                        "means (2,800). The feature row is identical within a pair, so for a "
+                        "squared-error learner this is equivalent to weighting pairs by rater "
+                        "count; it can only really matter for the tree and SVR families.")
     p.add_argument("--n-splits", type=int, default=5)
     p.add_argument("--outdir", default="egs/weak")
     p.add_argument("--overwrite", action="store_true")
@@ -127,11 +132,13 @@ def main():
     preds_dir = os.path.join(args.outdir, "preds")
     os.makedirs(preds_dir, exist_ok=True)
 
-    train_pairs = read_pairs(args.train_csv)
+    train_pairs = (read_rating_rows(args.train_csv) if args.per_rating
+                   else read_pairs(args.train_csv))
     dev_pairs = read_pairs(DEV_CSV)
     test_pairs = read_pairs(TEST_CSV, metrics=())
     groups = np.array([p["system_id"] for p in train_pairs])
-    logging.info(f"{len(train_pairs)} train pairs over {len(set(groups))} systems, "
+    unit = "rating rows" if args.per_rating else "pairs"
+    logging.info(f"{len(train_pairs)} train {unit} over {len(set(groups))} systems, "
                  f"{len(dev_pairs)} dev, {len(test_pairs)} test  [{args.train_csv}]")
 
     # Detected from the data rather than from a flag, so a combined CSV under any name is
@@ -196,6 +203,7 @@ def main():
                                "learner": lname, "metric": metric, "params": params,
                                "n_features": int(Xtr.shape[1]), "pca_dim": pca_dim,
                                "train_csv": args.train_csv, "n_train_pairs": len(train_pairs),
+                               "per_rating": args.per_rating,
                                "dev_in_train": dev_in_train,
                                "cv_srcc": round(float(cv_srcc), 4),
                                "dev_srcc": round(float(srcc(ytrue, dev_pred)), 4),

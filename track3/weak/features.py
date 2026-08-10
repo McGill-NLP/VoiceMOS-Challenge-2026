@@ -69,6 +69,36 @@ def read_pairs(csv_path, metrics=("spk_sim", "acc_sim")):
     return pairs
 
 
+def read_rating_rows(csv_path, metrics=("spk_sim", "acc_sim")):
+    """One entry per LISTENER RATING, without collapsing to pairs.
+
+    The alternative to `read_pairs`: 13,687 rows instead of 2,800 for train.csv. The feature
+    vector is identical across a pair's ~5 rows -- it depends only on the two waveforms -- so
+    the rows differ solely in their target.
+
+    For a squared-error learner this is not new information. Summing over the k ratings of a
+    pair, sum_j (x.b - y_j)^2 = k (x.b - ybar)^2 + const, so fitting the duplicated rows gives
+    the same ridge solution as fitting the pair means with sample weight k, and the counts here
+    are almost uniform (2,488 pairs with 5 ratings, 311 with 4, 1 with 3). It can matter for
+    the non-quadratic losses (LinearSVR, SVR) and for the tree learners, where duplicated rows
+    change split counts and leaf statistics.
+    """
+    rows = []
+    with open(csv_path, newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            item = {"wav_a_path": row["wav_a_path"], "wav_b_path": row["wav_b_path"],
+                    "system_id": row.get("system_id", ""),
+                    "utterance_id": row.get("utterance_id", "")}
+            keep = False
+            for m in metrics:
+                v = row.get(m)
+                item[m] = float(v) if v not in (None, "") else None
+                keep = keep or item[m] is not None
+            if keep:
+                rows.append(item)
+    return rows
+
+
 def stack_sides(pairs, emb):
     """(A, B) embedding matrices for a list of pairs, in order."""
     A = np.stack([emb[os.path.basename(p["wav_a_path"])] for p in pairs])
