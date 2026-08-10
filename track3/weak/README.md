@@ -11,9 +11,10 @@ are independent and can be read in either order.
 Nothing here is fine-tuned. Every encoder runs once, under `torch.inference_mode()`, and the
 embeddings are cached to disk. All the learning happens in scikit-learn on the CPU.
 
-**Result: `spk_sim` dev UTT-SRCC 0.609 and `acc_sim` 0.577**, against 0.579 / 0.564 for the
-deep pool alone — and 0.607 / 0.579 for the best previous system. On `spk_sim` this is the
-first ensemble gain in the project whose 95% CI excludes zero: **+0.029 [+0.012, +0.047]**.
+**Result: `spk_sim` dev UTT-SRCC 0.620 and `acc_sim` 0.595**, against 0.579 / 0.564 for the
+deep pool alone — and 0.607 / 0.579 for the best previous system. These are the first ensemble
+gains in the project whose 95% CIs exclude zero: **+0.040 [+0.020, +0.061]** and
+**+0.031 [+0.005, +0.058]**.
 
 ---
 
@@ -93,9 +94,25 @@ compact   [           |e_a - e_b|, e_a * e_b, cos, ||e_a - e_b||]   2D + 2
 [../unified/interactions.py](../unified/interactions.py): substituting a *wrong* sys019
 reference only moved SYS-SRCC 0.932 -> 0.786, so much of the signal is in `e_a` alone.
 
-Embeddings wider than 256 are PCA-reduced to 128 first, fitted on **train only**. Without it,
-1024-d SSL embeddings give 4,098 `full` features against 2,800 training pairs. Feature
-matrices are standardised on train; SVR and ridge are both scale-sensitive.
+Feature matrices are standardised on train; SVR and ridge are both scale-sensitive.
+
+**PCA is off by default, and turning it on was a mistake worth recording.** The first sweep
+reduced any embedding wider than 256 to 128 principal components, on the reasoning that 1024-d
+SSL embeddings give 4,098 `full` features against 2,800 pairs. Both halves of that reasoning
+were wrong. Ridge already handles p > n — its selected alpha rose to 10,000 on the raw
+features, i.e. it regularised itself — and the tree learners improved too, contradicting the
+claim that they would drown. Measured on `WAV2VEC2_XLSR_300M_l4`:
+
+| run | PCA-128 | raw | delta |
+|---|---|---|---|
+| ridge, `spk_sim` | 0.516 | **0.572** | +0.056 |
+| hgb, `spk_sim` | 0.510 | **0.548** | +0.038 |
+| ridge, `acc_sim` | 0.452 | **0.505** | +0.053 |
+
+Across the SSL sweep 23 of 24 configurations improved without PCA, by +0.05 to +0.29. PCA
+maximises retained *variance*, and the dominant variance directions in an SSL embedding are
+speaker, channel and recording characteristics — not the fine distinctions this judgement
+needs. Use `--pca-threshold 99999` to disable it, which is what the shipped results use.
 
 ---
 
@@ -146,66 +163,113 @@ identical feature rows would only reweight pairs by rater count.
 
 All on `dev_with_labels.csv`, 600 pairs.
 
-### Best single weak models
+### Best single weak models (no PCA, fitted on train, scored on held-out dev)
 
 | target | encoder | features | learner | uSRCC |
 |---|---|---|---|---|
-| `spk_sim` | `eres2netv2` | full | ksvr | **0.534** |
-| `spk_sim` | `eres2netv2` | full | ridge | 0.527 |
-| `spk_sim` | `WAV2VEC2_XLSR_300M_l4` | full | ridge | 0.516 |
-| `acc_sim` | `WAV2VEC2_XLSR_300M_l4` | full | hgb | **0.512** |
-| `acc_sim` | `ecapa-voxceleb` | full | ridge | 0.501 |
-| `acc_sim` | `commonaccent-ecapa` | full | hgb | 0.499 |
+| `spk_sim` | `WAVLM_LARGE_l4` | full | ridge | **0.602** |
+| `spk_sim` | `WAVLM_LARGE_l4` | compact | ridge | 0.583 |
+| `spk_sim` | `WAV2VEC2_XLSR_300M_l4` | compact | ridge | 0.573 |
+| `acc_sim` | `WAVLM_LARGE_l4` | compact | ridge | **0.542** |
+| `acc_sim` | `WAVLM_LARGE_l4` | full | ridge | 0.541 |
+| `acc_sim` | `WAVLM_BASE_PLUS_l4` | full | ridge | 0.531 |
+
+For reference, the best fine-tuned deep models are 0.569 (`spk_sim`) and 0.552 (`acc_sim`).
 
 ### Pools
 
-| | uMSE | uLCC | uSRCC | sMSE | sLCC | sSRCC |
+All rows are the unweighted mean of their members, scored on `dev_with_labels.csv`. The
+deep members are identical throughout (fitted on train only); only the weak half changes.
+
+**Read the `[IN-SAMPLE]` rows as diagnostics, not results.** When the weak learners are
+refitted on train+dev, dev becomes 600 of the 3,400 fitting pairs, so those numbers are partly
+memorisation. They are recorded because they were asked for and because the size of the
+inflation is itself informative — not because they estimate anything.
+
+| pool | uMSE | uLCC | uSRCC | sMSE | sLCC | sSRCC |
 |---|---|---|---|---|---|---|
 | **`spk_sim`** | | | | | | |
-| deep top-8 | 0.349 | 0.621 | 0.579 | 0.049 | 0.938 | 0.907 |
-| weak top-8 | 0.341 | 0.635 | 0.602 | 0.048 | **0.953** | **0.921** |
-| **deep + weak** | **0.336** | **0.642** | **0.609** | **0.047** | 0.950 | 0.919 |
+| deep top-8 (train only) | 0.349 | 0.621 | 0.579 | **0.049** | 0.938 | 0.907 |
+| weak top-8, train only *(held out)* | 0.354 | 0.639 | 0.610 | 0.066 | **0.954** | **0.941** |
+| **deep + weak, train only** *(held out)* | 0.337 | **0.652** | **0.620** | 0.053 | 0.952 | 0.931 |
+| weak top-8, train+dev `[IN-SAMPLE]` | 0.229 | 0.792 | 0.766 | 0.028 | 0.968 | 0.960 |
+| deep + weak, train+dev `[IN-SAMPLE]` | 0.274 | 0.733 | 0.701 | 0.036 | 0.960 | 0.947 |
 | **`acc_sim`** | | | | | | |
-| deep top-8 | 0.316 | 0.601 | 0.564 | 0.039 | **0.924** | **0.933** |
-| weak top-8 | 0.312 | 0.609 | 0.561 | 0.039 | 0.906 | 0.888 |
-| **deep + weak** | **0.305** | **0.623** | **0.577** | **0.037** | 0.922 | 0.913 |
+| deep top-8 (train only) | 0.316 | 0.601 | 0.564 | **0.039** | 0.924 | 0.933 |
+| weak top-8, train only *(held out)* | 0.346 | 0.581 | 0.560 | 0.057 | 0.942 | **0.957** |
+| **deep + weak, train only** *(held out)* | 0.314 | **0.624** | **0.595** | 0.040 | **0.942** | 0.958 |
+| weak top-8, train+dev `[IN-SAMPLE]` | 0.245 | 0.731 | 0.694 | 0.021 | 0.956 | 0.959 |
+| deep + weak, train+dev `[IN-SAMPLE]` | 0.267 | 0.699 | 0.660 | 0.028 | 0.948 | 0.959 |
 
-Gain over deep-only, bootstrap 95% CI: `spk_sim` **+0.029 [+0.012, +0.047]**,
-`acc_sim` +0.013 [-0.006, +0.029].
+Gain over deep-only, bootstrap 95% CI, held-out rows only: `spk_sim`
+**+0.040 [+0.020, +0.061]**, `acc_sim` **+0.031 [+0.005, +0.058]**. Both exclude zero.
+
+Weak-only is *not* a substitute for the combination: on `spk_sim` it reaches 0.610 but at
++0.031 [-0.010, +0.074] against deep-only, and on `acc_sim` it is flat (-0.005). The
+combination is what is reliably better on both targets.
+
+**Effect of the PCA bug** (see Features): with PCA-128, the same held-out pools scored
+`spk_sim` 0.609 and `acc_sim` 0.577 instead of 0.620 and 0.595.
+
+**Size of the in-sample inflation.** Per member it is +0.10 to +0.19 for the ridge models, and
+**+0.388** for `eres2netv2__full__ksvr` (0.534 -> 0.923): an RBF-SVR interpolates its own
+training points, so on rows it was fitted on it looks near-perfect. That single number is the
+cleanest demonstration in this project of why the protocol matters. Note also that the
+`deep + weak` in-sample rows are *lower* than `weak`-only in-sample, because the eight deep
+members never saw dev and pull the average back toward honesty.
+
+The best available estimate for the train+dev system remains the held-out **0.620 / 0.595**
+plus an unmeasurable gain from 21% more data. Test predictions from the two variants correlate
+at 0.998 (`spk_sim`) and 0.997 (`acc_sim`), so whatever that gain is, it is small.
 
 ### Decorrelation — the thing the experiment was actually testing
+
+Mean pairwise correlation of member residuals:
 
 | | `spk_sim` | `acc_sim` |
 |---|---|---|
 | within deep top-8 | 0.957 | 0.927 |
-| within weak top-8 | 0.851 | 0.867 |
-| deep vs weak, cross-pool | 0.866 | 0.859 |
+| within weak top-8, PCA-128 | 0.851 | 0.867 |
+| within weak top-8, no PCA | 0.925 | 0.955 |
+| deep vs weak, cross-pool (PCA-128) | 0.866 | 0.859 |
+| deep vs weak, cross-pool (no PCA) | 0.871 | 0.865 |
 
-The weak pool is internally more diverse than the deep pool, and the cross-pool figure sits
-below the 0.878 that the heterogeneous pool needed to earn +0.062. The mechanism worked.
+The cross-pool figure is the one that matters, and under both settings it sits at or below the
+0.878 that the heterogeneous deep pool needed to earn +0.062 — well below the 0.957 the deep
+pool manages internally. Changing the function class decorrelates the errors in a way that
+swapping one speaker-ID encoder for another did not. The mechanism worked.
 
 ---
 
 ## Findings
 
-**SSL layer 4 beats layer 24, decisively.** For every bundle the early layer wins:
-`XLSR_300M` scores 0.516 at layer 4 vs 0.438 at layer 24 (`spk_sim`), and 0.512 vs 0.381
-(`acc_sim`). UTMOS22 used only the last layer. Last layers of masked-prediction models are
-specialised toward the pretraining objective; the speaker- and channel-bearing information
-that similarity assessment needs sits lower.
+**Early SSL layers beat late ones, but less than PCA made it look.** Layer 4 wins for every
+bundle, and UTMOS22 used only the last layer. Under PCA-128 the gap looked enormous —
+`XLSR_300M` 0.516 at layer 4 vs 0.438 at layer 24 (`spk_sim`) — but removing PCA lifted the
+deep layers by +0.244 and +0.292, so much of that gap was PCA damage rather than layer
+quality. The ordering survives; the magnitude does not.
 
-**`WAV2VEC2_XLSR_300M_l4` is the best `acc_sim` encoder in the sweep** (0.512), ahead of
-`commonaccent-ecapa` (0.499) — the purpose-built accent encoder. A multilingual SSL model
-treats accent variation as signal; an accent *classifier* compresses it to 16 logits.
+**Frozen SSL features beat fine-tuned encoders.** The single best model anywhere in this
+project is `WAVLM_LARGE_l4__full__ridge` at **0.602** on `spk_sim` — a ridge regression on
+frozen WavLM-Large layer-4 embeddings, fitted in about ten seconds. It beats every fine-tuned
+deep model (best 0.569) and nearly matches the entire deep top-8 ensemble (0.579). On 2,800
+pairs, gradient fine-tuning is contributing much less than assumed.
 
-**Weak learners are not weak.** On `spk_sim` the weak pool alone (0.602) beats the deep pool
-alone (0.579), and an RBF-SVR on frozen `eres2netv2` features (0.534) matches fine-tuned
-`ecapa-voxceleb` models (0.479-0.521) at seconds of CPU each. This is evidence that gradient
-fine-tuning contributes less on 2,800 pairs than assumed.
+**A multilingual SSL model beats the purpose-built accent encoder.** On `acc_sim`,
+`WAV2VEC2_XLSR_300M` and `WAVLM_LARGE` layer-4 models reach 0.516-0.542, ahead of
+`commonaccent-ecapa` (0.499). XLS-R treats accent variation as signal; an accent *classifier*
+compresses it to 16 logits.
 
-**`full` beats `compact` everywhere** — 0.534 vs 0.498 (`spk_sim`), 0.512 vs 0.491
-(`acc_sim`). The raw embedding blocks earn their place for a classical regressor even though
-the `no-b` ablation favoured dropping them for a deep head.
+**`full` vs `compact` is a wash once PCA is removed.** Under PCA `full` won everywhere (0.534
+vs 0.498 on `spk_sim`). On raw features they trade places — `XLSR_300M_l4` scores 0.573
+compact vs 0.572 full — so the raw embedding blocks are not clearly earning their place.
+
+**Better members can mean a worse pool.** Removing PCA raised individual scores but *raised*
+internal residual correlation within the weak top-8, from 0.851 to 0.925 (`spk_sim`) and 0.867
+to 0.955 (`acc_sim`), because the no-PCA top-8 is dominated by ridge on similar SSL layers.
+Cross-pool correlation against the deep models barely moved (0.866 -> 0.871). So the no-PCA
+gain came from member *quality*, and the PCA pool's contribution was *diversity* — different
+mechanisms, which is why the combined pool wins either way.
 
 **Learned stacking weights buy nothing over a plain average.** On `spk_sim` the unweighted
 mean *won*, with `alpha`, `nnls` and `ridge` all within 0.004. At n=600 across 23 groups there
@@ -224,27 +288,56 @@ selection uses `dev_srcc`, not `cv_srcc`.
 
 ```
 extract_features.py   frozen embeddings for 4,160 unique wavs -> egs/features/*.npz
-features.py           pair matrices, feature sets, train-only PCA
-train_weak.py         5 learner families x GroupKFold -> egs/weak/preds/, resumable manifest
+features.py           pair matrices, feature sets, optional train-only PCA
+train_weak.py         5 learner families x GroupKFold -> <outdir>/preds/, resumable manifest
 analyze.py            six metrics, residual correlations, ensemble comparison  (phase 1)
-stack.py              combine deep + weak, write submission                    (phase 2)
+stack.py              combine deep + weak, SELECTS members by dev SRCC          (phase 2)
+make_submission.py    combine from an EXPLICIT frozen member list, selects nothing
 ```
+
+Output trees, none of which overwrite another:
+
+| tree | fitted on | notes |
+|---|---|---|
+| `egs/weak/` | train | the original 260-model sweep, with PCA-128 on SSL |
+| `egs/weak_nopca/` | train | SSL ridge without PCA; **the shipped held-out results** |
+| `egs/weak_traindev/` | train+dev | 84 refits; every manifest record carries `dev_in_train: true` |
 
 ```bash
-# everything, on Slurm (~10 min GPU + ~6 h CPU)
+# the full held-out sweep, on Slurm (~10 min GPU + ~6 h CPU)
 sbatch ../jobs/weak/voicemos-track3-weak-phase1.sh
 
-# or by hand
+# by hand
 python extract_features.py --list
 python extract_features.py --encoders sv:eres2netv2 ssl:WAVLM_LARGE --ssl-layers 4 8 -1
-python train_weak.py --features "egs/features/*.npz" --targets spk_sim
+python train_weak.py --features "egs/features/*.npz" --targets spk_sim --pca-threshold 99999
 python analyze.py --target spk_sim
 python stack.py --target spk_sim --require-test --write-dev egs/submission --write-test egs/submission
+
+# refit on train+dev (allowed by the challenge) and build the submission from the FROZEN list
+python train_weak.py --train-csv ../baseline/data/vmc2026_track3_train_phase_distro_v3_syn/sets/train_plus_dev.csv \
+    --features "egs/features/*.npz" --pca-threshold 99999 --outdir egs/weak_traindev
+python make_submission.py --target spk_sim --weak-dir egs/weak_traindev/preds --out egs/submission_final/train_plus_dev
 ```
 
-Predictions are `egs/weak/preds/<encoder>__<featureset>__<learner>__<metric>__<split>.csv`
-for `split` in `{oof, dev, test}`. `oof` is out-of-fold on train (2,800 rows) and is what a
+Predictions are `<outdir>/preds/<encoder>__<featureset>__<learner>__<metric>__<split>.csv`
+for `split` in `{oof, dev, test}`. `oof` is out-of-fold on the fitting set and is what a
 phase-2 stacker would need if the deep models ever get out-of-fold predictions too.
+
+### Training on train+dev
+
+`sets/train_plus_dev.csv` (3,400 pairs, 23 systems) concatenates `train.csv` and
+`dev_with_labels.csv`; dev rows carry an empty `listener_id`, which the deep pipeline drops
+anyway when `keep_listeners=False`. No feature recomputation or wav copying is needed — the
+cache already covers all 4,160 wavs including dev's, and every dev wav resolves under the
+train distribution's root.
+
+`train_weak.py` detects from the pair keys, not from a flag, whether dev is inside the fitting
+set, and then stamps `dev_in_train: true` into every manifest record and tags each log line
+`[IN-SAMPLE]`. This is not cosmetic: with dev in training there is **no held-out set left**, so
+member selection cannot be redone and must stay frozen at what the held-out runs chose. That
+is why `make_submission.py` exists — `stack.py` would re-select on the in-sample scores and
+pick whichever model memorised hardest.
 
 ### On phase 2
 

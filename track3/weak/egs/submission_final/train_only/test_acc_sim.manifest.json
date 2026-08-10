@@ -2,9 +2,21 @@
   "metric": "acc_sim",
   "combiner": "unweighted mean, no fitted parameters",
   "n_members": 16,
+  "deep_k": 8,
+  "weak_k": 8,
   "selection": "FROZEN from the held-out runs (dev not in training); not re-derived",
   "weak_dir": "egs/weak_nopca/preds",
-  "note": "weak fitted on train (2800 pairs); held-out dev UTT-SRCC 0.620 spk / 0.595 acc",
+  "weak_fitted_on_dev": false,
+  "dev_scores_are_in_sample": false,
+  "dev_metrics": {
+    "uMSE": 0.3137,
+    "uLCC": 0.6242,
+    "uSRCC": 0.595,
+    "sMSE": 0.0398,
+    "sLCC": 0.9417,
+    "sSRCC": 0.9585
+  },
+  "note": "deep top-8 (train) + weak top-8 from egs/weak_nopca/preds",
   "pred_mean": 3.8475,
   "pred_sd": 0.3536,
   "members": [
