@@ -152,8 +152,9 @@ systems. Random folds would let a model memorise system identity and pick hyperp
 do not survive the real split. UTMOS22 used plain CV; that is not safe here.
 
 **dev is for scoring only.** Weak learners are fitted on the 2,800 train pairs. Every reported
-number comes from `dev_with_labels.csv`. `test.csv` is unlabelled — predictions are written
-for submission packaging and are never scored locally.
+number comes from `dev_with_labels.csv`. Test labels were released after the challenge closed
+and are used only for the post-hoc table below — no selection, no member list and no
+hyperparameter in this directory has ever seen them.
 
 **Targets** are the per-pair mean over raters: 13,687 rating rows collapse to 2,800 pairs.
 The feature vector is identical across a pair's rows, so for a squared-error learner this is
@@ -397,6 +398,49 @@ The cross-pool figure is the one that matters, and under both settings it sits a
 0.878 that the heterogeneous deep pool needed to earn +0.062 — well below the 0.957 the deep
 pool manages internally. Changing the function class decorrelates the errors in a way that
 swapping one speaker-ID encoder for another did not. The mechanism worked.
+
+### Test set — post-hoc, on the released labels
+
+`sets/vmc2026_track3_test_with_labels.csv`, 600 pairs, 25 systems. Every composition is the
+frozen held-out member list, so nothing here was selected on test. Combiner unchanged:
+unweighted mean, clipped to [1, 5]. `deep [train+dev]` members come from
+[../unified/egs/ensemble_runs_traindev/](../unified/egs/ensemble_runs_traindev/), the same 4x2x2
+grid refit on train+dev by [../jobs/strong/](../jobs/strong/).
+
+| pool | n | uMSE | uLCC | uSRCC | sMSE | sLCC | sSRCC |
+|---|---|---|---|---|---|---|---|
+| **`spk_sim`** | | | | | | | |
+| deep top-8 [train+dev] only | 8 | 0.432 | 0.549 | 0.575 | 0.059 | 0.891 | 0.913 |
+| weak top-16 [train] | 16 | 0.403 | **0.593** | **0.615** | 0.073 | 0.891 | 0.922 |
+| weak top-16 [train+dev] — **submitted** | 16 | **0.400** | 0.589 | 0.606 | 0.058 | 0.898 | 0.923 |
+| deep top-8 [train] + weak top-16 [train+dev] | 24 | 0.404 | 0.589 | 0.609 | **0.055** | **0.903** | **0.940** |
+| deep top-8 [train+dev] + weak top-16 [train+dev] | 24 | 0.402 | 0.589 | 0.609 | 0.057 | 0.902 | 0.935 |
+| deep all-16 [train+dev] + weak top-16 [train+dev] | 32 | 0.408 | 0.583 | 0.607 | 0.063 | 0.897 | 0.937 |
+| **`acc_sim`** | | | | | | | |
+| deep top-8 [train+dev] only | 8 | 0.494 | 0.467 | 0.478 | 0.060 | 0.803 | 0.864 |
+| weak top-16 [train] | 16 | 0.462 | 0.512 | 0.514 | 0.054 | 0.862 | **0.885** |
+| weak top-16 [train+dev] — **submitted** | 16 | **0.457** | 0.517 | 0.523 | **0.046** | **0.866** | 0.882 |
+| deep top-8 [train] + weak top-16 [train+dev] | 24 | 0.458 | **0.521** | **0.530** | 0.048 | 0.853 | 0.868 |
+| deep top-8 [train+dev] + weak top-16 [train+dev] | 24 | 0.461 | 0.517 | 0.528 | 0.048 | 0.855 | 0.876 |
+| deep all-16 [train+dev] + weak top-16 [train+dev] | 32 | 0.463 | 0.514 | 0.522 | 0.050 | 0.847 | 0.863 |
+
+**Adding the deep half is a small, unresolvable gain.** Against the submitted weak-only system:
++0.003 uSRCC on `spk_sim` (95% CI [-0.007, +0.013]) and +0.005 on `acc_sim`
+([-0.006, +0.017]). Positive on both targets, significant on neither at n=600. The visible
+movement is system-level `spk_sim`, sSRCC 0.923 -> 0.935-0.940.
+
+**Refitting the deep half on train+dev changes nothing**: +0.0005 (`spk_sim`) and -0.0019
+(`acc_sim`) against the train-only deep members, weak half held fixed. The same held on the deep
+grid's own ensemble. 21% more data does not show up anywhere downstream.
+
+**The flat mean is already at its optimum.** Sweeping an explicit weight between the two pools,
+the pooled 24-member mean (2/3 weak by construction) is within 0.001 of the best weight on both
+targets — so there was nothing for a fitted combiner to recover, consistent with the dev-side
+finding that `nnls` and `ridge` land within 0.004 of the unweighted mean.
+
+**Ranking carries over from dev, `acc_sim` much less well.** Held-out dev 0.623 / 0.603 becomes
+test 0.609 / 0.528: `spk_sim` loses 0.014, `acc_sim` 0.075. Test contains four systems absent
+from train against dev's two, and accent similarity is the target that generalises worse.
 
 ---
 
