@@ -19,6 +19,16 @@ Available encoders, listed by `python encoders.py --list`:
   commonaccent-ecapa    Jzuluaga/accent-id-commonaccent_ecapa    (ECAPA fine-tuned for accent ID)
   eres2netv2            iic/speech_eres2netv2_sv_zh-cn_16k-common
   eres2netv2-w24s4ep4   iic/speech_eres2netv2w24s4ep4_sv_zh-cn_16k-common
+  wavlm-base-plus-l{4,8,12}    torchaudio WAVLM_BASE_PLUS      (masked-prediction SSL)
+  wavlm-large-l{4,8,24}        torchaudio WAVLM_LARGE
+  xlsr-300m-l{4,8,24}          torchaudio WAV2VEC2_XLSR_300M
+
+The four speaker/accent-ID encoders are discriminative nets trained to be INVARIANT to the
+channel and phonetic variation accent lives in; the SSL bundles retain it. On frozen features
+the SSL models were the strongest weak learners by a wide margin (see ../weak/README.md), which
+is why they are fine-tunable here too. `-l<n>` selects the transformer layer to read, and the
+stack is physically truncated there -- layer 4 of WavLM-Large is a 63.5M-parameter model, not a
+315M one, so the layer choice is a cost decision as much as a quality one.
 
 Encoders can be combined by joining names with '+', e.g. "eres2netv2+commonaccent-ecapa".
 Each branch is L2-normalised before concatenation so that no branch dominates by scale.
@@ -217,6 +227,145 @@ class ERes2NetV2Encoder(BaseEncoder):
         return self.model(feats)
 
 
+class SSLEncoder(BaseEncoder):
+    """A `torchaudio.pipelines` SSL bundle read at one layer and mean-pooled over time.
+
+    Matches what the weak learners consume (`../weak/extract_features.py`), so a fine-tuned
+    run and a ridge on frozen features see the same representation and differ only in whether
+    gradients reach the backbone.
+
+    THE STACK IS TRUNCATED at the requested layer. `extract_features(num_layers=n)` would
+    compute the same thing, but the unused layers would still be built, moved to the GPU,
+    handed to AdamW and written into every checkpoint. Deleting them makes layer 4 of
+    WavLM-Large a 63.5M-parameter backbone (verified identical outputs to the untruncated
+    model at atol 1e-5), which is what puts SSL fine-tuning within the same budget as
+    ERes2NetV2-w24s4ep4 at 53.5M.
+
+    TWO QUIRKS of torchaudio's implementation are handled here rather than worked around
+    upstream:
+
+    1. `Encoder.extract_features` cannot mask a padded batch for WavLM: it builds an additive
+       `attention_mask`, and `WavLMSelfAttention.forward` asserts that argument is None. WavLM
+       instead takes a boolean `key_padding_mask`, which `Transformer.get_intermediate_outputs`
+       never forwards. The layer loop is therefore written out here, passing whichever of the
+       two each attention implementation actually honours. Without it a padded row's embedding
+       moved by up to 6.1 absolute depending on what else was in its batch -- which would have
+       made test predictions depend on batch composition.
+
+    2. Bundles whose models were pretrained on normalised audio (`WAVLM_LARGE`,
+       `WAV2VEC2_XLSR_300M`) are wrapped in `_Wav2Vec2Model`, which applies
+       `layer_norm(waveform, waveform.shape)` over the WHOLE batch tensor -- padding included.
+       The wrapper is unwrapped and the normalisation redone per row over valid samples only,
+       which is what the batch-of-one path in the weak pipeline effectively did.
+
+    `layer_drop` defaults to 0: dropping one layer of a 24-layer stack is a perturbation,
+    dropping one of four is a lobotomy.
+    """
+
+    def __init__(self, bundle_name: str, layer: int, layer_drop: float = 0.0):
+        super().__init__()
+        import torchaudio.pipelines as pipelines
+
+        if not hasattr(pipelines, bundle_name):
+            raise ValueError(f"torchaudio.pipelines has no bundle '{bundle_name}'")
+        bundle = getattr(pipelines, bundle_name)
+        if bundle.sample_rate != SAMPLE_RATE:
+            raise ValueError(
+                f"{bundle_name} expects {bundle.sample_rate} Hz, pipeline audio is {SAMPLE_RATE}"
+            )
+
+        wrapper = bundle.get_model()
+        self.normalize_waveform = bool(getattr(bundle, "_normalize_waveform", False))
+        self.model = getattr(wrapper, "model", wrapper)
+
+        transformer = self.model.encoder.transformer
+        depth = len(transformer.layers)
+        if not 1 <= layer <= depth:
+            raise ValueError(f"{bundle_name} has {depth} layers; cannot read layer {layer}.")
+        del transformer.layers[layer:]
+        transformer.layer_drop = layer_drop
+
+        self.bundle_name = bundle_name
+        self.layer = layer
+        self.wavlm_attention = any(
+            type(l.attention).__name__ == "WavLMSelfAttention" for l in transformer.layers
+        )
+        with torch.no_grad():
+            probe = self.forward(torch.zeros(1, SAMPLE_RATE))
+        self.output_dim = probe.shape[-1]
+
+        logging.info(
+            f"{bundle_name}: layer {layer} of {depth}, dim {self.output_dim}, "
+            f"{sum(p.numel() for p in self.model.parameters()) / 1e6:.2f}M params after truncation"
+            + (", input layer-norm on" if self.normalize_waveform else "")
+        )
+
+    @staticmethod
+    def _valid_mask(lengths, size, device):
+        return torch.arange(size, device=device)[None, :] < lengths[:, None]
+
+    def _normalize(self, waveform, lengths):
+        """Per-row layer-norm over valid samples, zeroing the padding."""
+        if lengths is None:
+            return F.layer_norm(waveform, waveform.shape[-1:])
+        mask = self._valid_mask(lengths, waveform.shape[1], waveform.device).to(waveform.dtype)
+        n = mask.sum(dim=1, keepdim=True).clamp(min=1)
+        mean = (waveform * mask).sum(dim=1, keepdim=True) / n
+        var = (((waveform - mean) * mask) ** 2).sum(dim=1, keepdim=True) / n
+        return ((waveform - mean) * torch.rsqrt(var + 1e-5)) * mask
+
+    def _transformer(self, features, frame_lengths):
+        """`Encoder.extract_features` with the padding mask each attention type accepts.
+
+        Mirrors torchaudio's own `Encoder._preprocess` -> `Transformer.get_intermediate_outputs`
+        path exactly when `frame_lengths` is None; see quirk 1 above for why it is spelled out.
+        """
+        encoder = self.model.encoder
+        x = encoder.feature_projection(features)
+
+        pad = None
+        if frame_lengths is not None:
+            pad = ~self._valid_mask(frame_lengths, x.shape[1], x.device)   # True where padded
+            x = x.masked_fill(pad.unsqueeze(-1), 0.0)
+
+        transformer = encoder.transformer
+        x = transformer._preprocess(x)
+
+        # WavLM honours key_padding_mask (bool, True = pad) and rejects attention_mask;
+        # wav2vec 2.0 / XLS-R are the other way round and ignore key_padding_mask.
+        # Additive, not boolean, in both branches: torch's mask canonicalisation converts a
+        # bool mask to -inf, which would produce NaNs for any row that is entirely padding.
+        attention_mask = key_padding_mask = None
+        if pad is not None:
+            bias = -10000.0 * pad.to(x.dtype)
+            if self.wavlm_attention:
+                key_padding_mask = bias
+            else:
+                b, t = pad.shape
+                attention_mask = bias[:, None, None, :].expand(b, 1, t, t)
+
+        position_bias = None
+        for layer in transformer.layers:
+            x, position_bias = layer(
+                x, attention_mask, position_bias=position_bias,
+                key_padding_mask=key_padding_mask,
+            )
+        return x
+
+    def forward(self, waveform, lengths=None):
+        if self.normalize_waveform:
+            waveform = self._normalize(waveform, lengths)
+
+        features, frame_lengths = self.model.feature_extractor(waveform, lengths)
+        hidden = self._transformer(features, frame_lengths)
+
+        if frame_lengths is None:
+            return hidden.mean(dim=1)
+        mask = self._valid_mask(frame_lengths, hidden.shape[1], hidden.device)
+        mask = mask.unsqueeze(-1).to(hidden.dtype)
+        return (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
+
+
 class ConcatEncoder(BaseEncoder):
     """Runs several encoders on the same audio and concatenates their embeddings.
 
@@ -313,6 +462,29 @@ ENCODER_REGISTRY = {
 }
 
 
+# SSL bundles from torchaudio.pipelines. Layers 4 and 8 plus the last one, matching the layers
+# the weak-learner sweep kept -- layer 4 won there for every bundle and both targets, and the
+# last layer was close to the worst, so the cheapest entry is also the expected best.
+SSL_BUNDLES = {
+    "wavlm-base-plus": ("WAVLM_BASE_PLUS", 12, 768,
+                        "WavLM Base+ (94.4M full), masked prediction + denoising on 94k h."),
+    "wavlm-large": ("WAVLM_LARGE", 24, 1024,
+                    "WavLM Large (315.5M full), masked prediction + denoising on 94k h."),
+    "xlsr-300m": ("WAV2VEC2_XLSR_300M", 24, 1024,
+                  "XLS-R 300M, wav2vec 2.0 pretrained on 436k h across 128 languages."),
+}
+
+for _prefix, (_bundle, _depth, _dim, _desc) in SSL_BUNDLES.items():
+    for _layer in sorted({4, 8, _depth}):
+        ENCODER_REGISTRY[f"{_prefix}-l{_layer}"] = {
+            "type": "ssl",
+            "bundle": _bundle,
+            "layer": _layer,
+            "embedding_dim": _dim,
+            "description": f"{_desc} Truncated after layer {_layer} of {_depth}.",
+        }
+
+
 def build_encoder(spec: str, cache_dir: str = None, checkpoint: str = None) -> BaseEncoder:
     """Build an encoder from a registry name, or several joined by '+'.
 
@@ -344,6 +516,14 @@ def build_encoder(spec: str, cache_dir: str = None, checkpoint: str = None) -> B
                 cfg["checkpoint_urls"], cfg["checkpoint_file"], cache_dir
             )
             built[name] = ERes2NetV2Encoder(cfg["model_args"], str(ckpt))
+
+        elif cfg["type"] == "ssl":
+            if checkpoint is not None:
+                raise ValueError(
+                    "--encoder-checkpoint is not supported for SSL bundles; torchaudio "
+                    "downloads and caches their weights itself."
+                )
+            built[name] = SSLEncoder(cfg["bundle"], cfg["layer"])
 
         else:
             raise ValueError(f"Unknown encoder type '{cfg['type']}' for '{name}'.")

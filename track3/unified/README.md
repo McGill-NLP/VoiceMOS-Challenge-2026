@@ -66,6 +66,49 @@ Two details worth knowing:
   targets the soft losses reproduce `coral_pytorch`'s `corn_loss` and `coral_loss` to
   `0.00e+00`.
 
+## Encoders
+
+`python encoders.py --list`. Two families behind one contract — `encoder(waveform, lengths)`
+returns `(B, output_dim)`, and `--encoder` accepts any name below, or several joined by `+`.
+
+| name | dim | params | pretraining |
+|---|---|---|---|
+| `ecapa-voxceleb` | 192 | 20.8M | speaker ID, VoxCeleb (the baseline's) |
+| `commonaccent-ecapa` | 192 | 20.8M | accent ID, CommonVoice |
+| `eres2netv2` | 192 | 17.8M | speaker ID, 3D-Speaker |
+| `eres2netv2-w24s4ep4` | 192 | 53.5M | speaker ID, 3D-Speaker |
+| `wavlm-base-plus-l{4,8,12}` | 768 | 37.7M at l4 | masked prediction + denoising, 94k h |
+| `wavlm-large-l{4,8,24}` | 1024 | 63.5M at l4 | masked prediction + denoising, 94k h |
+| `xlsr-300m-l{4,8,24}` | 1024 | 63.5M at l4 | wav2vec 2.0, 436k h, 128 languages |
+
+The four speaker/accent-ID nets are trained to be *invariant* to the channel and phonetic
+variation accent lives in; the SSL bundles retain it. That difference is why the SSL models
+dominated the frozen-feature sweep in [../weak/](../weak/) — `WAVLM_LARGE_l4` + ridge scores
+0.602 dev UTT-SRCC on `spk_sim`, above every fine-tuned model here — and why they are
+fine-tunable in this pipeline too. `../jobs/ssl/` runs that grid.
+
+**`-l<n>` truncates, it does not just select.** Layers past `n` are deleted at build time
+rather than computed and discarded, so `wavlm-large-l4` is a 63.5M-parameter backbone instead
+of a 315.5M one — the same budget as `eres2netv2-w24s4ep4`, and the reason fine-tuning these
+is affordable at all. Outputs match the untruncated model to `atol=1e-5`. Layer 4 won for
+every bundle and both targets in the weak sweep; the last layer was close to the worst.
+
+**Padding is masked, which torchaudio's own path does not do for WavLM.**
+`Encoder.extract_features` builds an additive `attention_mask`, and `WavLMSelfAttention`
+asserts that argument is `None`; WavLM instead accepts a boolean `key_padding_mask` that
+`Transformer.get_intermediate_outputs` never forwards. `SSLEncoder` writes out the layer loop
+and passes whichever mask each attention implementation honours. Without it a row's embedding
+moved by up to 6.1 absolute depending on what else was in its batch — which would have made
+test predictions depend on batch composition. Verified: padded-batch vs single-row cosine is
+1.000000 for `wavlm-large-l4` and `xlsr-300m-l4`, 0.999974 for `wavlm-base-plus-l4` (the
+residual is the positional conv's 128-frame kernel reaching into the padding, which is
+fairseq's behaviour too), and unpadded output matches `torchaudio`'s own path exactly.
+
+Bundles pretrained on normalised audio (`WAVLM_LARGE`, `XLSR_300M`) are wrapped by torchaudio
+in a `_Wav2Vec2Model` that layer-norms over the *whole batch tensor*, padding included. The
+wrapper is unwrapped and the normalisation redone per row over valid samples — which is what
+the batch-of-one path in `../weak/extract_features.py` effectively did.
+
 ## Interaction vector
 
 `--interaction` selects how the two embeddings are combined before the head. With `d` the
@@ -163,7 +206,7 @@ will OOM long before that — it OOMs at plain batch 16 in full fine-tuning — 
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--encoder` | `ecapa-voxceleb` | `python encoders.py --list`; combine with `+` |
+| `--encoder` | `ecapa-voxceleb` | `python encoders.py --list`; combine with `+`; SSL names carry the layer, e.g. `wavlm-large-l4` |
 | `--embedding-dim` | 256 | projection width after the backbone |
 | `--head` | `mlp` | `mlp` or `moe` |
 | `--hidden-dim` | 64 | hidden width inside the trunk |
