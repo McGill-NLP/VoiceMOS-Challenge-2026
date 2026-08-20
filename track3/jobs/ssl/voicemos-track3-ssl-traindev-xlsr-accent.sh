@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:l40s:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --time=23:00:00
+#SBATCH --time=10:00:00
 #SBATCH --output=%x-%j.out
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=david.guzman@mila.quebec
@@ -52,12 +52,12 @@
 # sets/vmc2026_track3_test_with_labels.csv. Scoring only -- nothing in the training loop reads
 # those labels, and no member selection may either.
 #
-# COST, NOT YET MEASURED -- rerun the generator once the sizing job reports on an L40S at batch 4 x 4 (see voicemos-track3-ssl-sizing.sh):
+# MEASURED COST on an L40S at batch 16 x 1 (see voicemos-track3-ssl-sizing.sh):
 #
-#   NOT YET MEASURED, assumed at batch 4 x 4; 63.5M backbone, layer 4 of 24, dim 1024
-#   training               4 arms x ~5.0h = ~20.0h
+#   0.383 s/step and 13.2 GiB at batch 16 x 1; 63.5M backbone, layer 4 of 24, dim 1024
+#   training               4 arms x ~1.8h = ~7.1h
 #   inference              4 arms x 4 passes x ~2 min = ~35 min
-#   total                  ~20.7h, hence 23 h with slack.
+#   total                  ~7.8h, hence 10 h with slack.
 #
 # NOTHING IS OVERWRITTEN: checkpoints go to egs/ssl_runs_traindev/, a sibling of
 # egs/ensemble_runs_traindev/, with the same <encoder>-<loss>-<interaction>_<metric> tags.
@@ -66,7 +66,7 @@
 # on disk. Resubmit the same script after a timeout or preemption.
 #
 # To run one cell, or to split across shorter allocations:
-#   sbatch --export=ALL,ARMS="xlsr-300m-l4:coral:bilinear" --time=07:00:00 \
+#   sbatch --export=ALL,ARMS="xlsr-300m-l4:coral:bilinear" --time=03:00:00 \
 #       track3/jobs/ssl/voicemos-track3-ssl-traindev-xlsr-accent.sh
 #
 # Deliberately NOT using `set -e`: if one arm fails the rest should still run.
@@ -136,8 +136,8 @@ TEST_LABELS=${TEST_LABELS:-$EV/sets/vmc2026_track3_test_with_labels.csv}
 ALL_ARMS="$ENC:mse:baseline $ENC:mse:bilinear $ENC:coral:baseline $ENC:coral:bilinear"
 ARMS=${ARMS:-"$ALL_ARMS"}
 
-BATCH=${BATCH:-4}
-ACCUM=${ACCUM:-4}
+BATCH=${BATCH:-16}
+ACCUM=${ACCUM:-1}
 LR=${LR:-1e-3}
 BILINEAR_RANK=${BILINEAR_RANK:-64}
 TRAIN_STEPS=${TRAIN_STEPS:-20000}

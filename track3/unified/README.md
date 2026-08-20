@@ -90,8 +90,10 @@ fine-tunable in this pipeline too. `../jobs/ssl/` runs that grid.
 **`-l<n>` truncates, it does not just select.** Layers past `n` are deleted at build time
 rather than computed and discarded, so `wavlm-large-l4` is a 63.5M-parameter backbone instead
 of a 315.5M one — the same budget as `eres2netv2-w24s4ep4`, and the reason fine-tuning these
-is affordable at all. Outputs match the untruncated model to `atol=1e-5`. Layer 4 won for
-every bundle and both targets in the weak sweep; the last layer was close to the worst.
+is affordable at all. Outputs match the untruncated model to `atol=1e-5`. In the frozen-feature sweep
+layer 4 won 10 of 12 (bundle x target x feature-set) cells -- XLS-R on `acc_sim` prefers layer
+8 -- and the last layer was close to the worst everywhere. Only layers {4, 8, last} were ever
+extracted, so that is a best-of-three, not an optimum.
 
 **Padding is masked, which torchaudio's own path does not do for WavLM.**
 `Encoder.extract_features` builds an additive `attention_mask`, and `WavLMSelfAttention`

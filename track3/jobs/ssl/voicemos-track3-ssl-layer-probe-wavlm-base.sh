@@ -1,75 +1,81 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=voicemos-track3-ssl-traindev-wavlm-base-accent
+#SBATCH --job-name=voicemos-track3-ssl-layer-probe-wavlm-base
 #SBATCH --partition=long
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:l40s:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --time=08:00:00
+#SBATCH --time=09:00:00
 #SBATCH --output=%x-%j.out
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=david.guzman@mila.quebec
 
-# SSL encoder in the DEEP pipeline, ACCENT similarity, WavLM Base+ read at layer 4.
+# LAYER PROBE for WavLM Base+: which transformer layer should the full SSL grid read?
 #
-#   sbatch track3/jobs/ssl/voicemos-track3-ssl-traindev-wavlm-base-accent.sh
+#   sbatch track3/jobs/ssl/voicemos-track3-ssl-layer-probe-wavlm-base.sh
 #
-# WHY THIS EXISTS. On frozen features the SSL bundles were the strongest weak learners by a
-# margin -- `WAVLM_LARGE_l4__full__ridge` scores 0.602 dev UTT-SRCC on spk_sim, beating every
-# fine-tuned speaker-ID model in ../../unified/ (best 0.569) and nearly matching the entire deep
-# top-8 ensemble (0.579). Those numbers came from a ridge regression with no gradient path into
-# the encoder. This grid asks the obvious follow-up: what do the same representations do when
-# the backbone is allowed to move.
+# THE QUESTION. On FROZEN features layer 4 wins for every bundle on spk_sim and for two of the
+# three on acc_sim, with the last layer far behind. For this bundle, ridge scores
+# l4 0.535, l8 0.421, l12 0.343 on spk_sim; l4 0.531, l8 0.469, l12 0.327 on acc_sim.
 #
-# The recipe is the train+dev factorial from ../strong/, with the encoder axis swapped:
+# Two reasons not to just inherit that. It was measured where nothing can adapt -- under
+# fine-tuning the upper layers get to reorganise, which is why SSL-MOS and UTMOS-style systems
+# usually read the last layer instead. And the rule is already not universal: XLS-R prefers
+# layer 8 to layer 4 on acc_sim (0.523 vs 0.505). Committing the 24-run grid in
+# voicemos-track3-ssl-traindev-*.sh to layer 4 would bet the whole ablation on a result
+# measured in a different training regime that does not hold everywhere even in that regime.
 #
-#   encoder      wavlm-base-plus-l4   (fixed in this job)
-#   objective    mse | coral
-#   interaction  baseline | bilinear
+# This job buys that bet down. One cell per layer -- the cheapest and most representative of
+# the four, mse + baseline -- so the layer axis is the only thing varying:
 #
-# 4 cells here; ../strong/ covers the four speaker/accent-ID encoders under identical settings,
-# so the two grids concatenate into one 7-encoder pool for ensembling.
+#   wavlm-base-plus-l4      37.7M params    40.1 GFLOP/utt  batch 16 x 1  ~1.4 h  (measured)
+#   wavlm-base-plus-l8      66.0M params    54.3 GFLOP/utt  batch 8 x 2  ~1.9 h  (extrapolated)
+#   wavlm-base-plus-l12     94.4M params    68.4 GFLOP/utt  batch 8 x 2  ~2.4 h  (extrapolated)
 #
-# Held fixed, matching ../strong/ exactly: MoE head, freeze 5000/20000, --backbone-lr-mult 0.1,
-# 20,000 steps, lr 1e-3, effective batch 16, --best-metric srcc_utt, fitted on
-# sets/train_plus_dev.csv (3,400 pairs, 23 systems).
+# Everything else is held at the full grid's settings: MoE head, freeze 5000/20000,
+# --backbone-lr-mult 0.1, 20,000 steps, lr 1e-3, effective batch 16, --best-metric srcc_utt,
+# fitted on sets/train_plus_dev.csv, scored on the labelled test split.
 #
-# THE STACK IS TRUNCATED AT LAYER 4. encoders.py deletes layers 5+ rather than computing and
-# discarding them, which makes this a 37.7M-parameter backbone instead of the full bundle
-# -- comparable to eres2netv2-w24s4ep4's 53.5M, and the reason a 315M-parameter model is
-# affordable here at all. Outputs are identical to the untruncated model at atol 1e-5. Layer 4
-# is the weak sweep's winner for every bundle and both targets; -l8 and the last layer are
-# registered in ENCODER_REGISTRY if the ablation is ever worth extending.
+# WHY ONE TARGET. spk_sim only, because probing both doubles the cost and the frozen-feature
+# layer ranking agrees across targets for five of the six (bundle, target) pairs. The exception
+# is XLS-R on acc_sim, so for that bundle in particular a METRIC=acc_sim rerun is worth the
+# extra ~13 h before committing its half of the grid. Same for any bundle whose spk_sim spread
+# comes back inside the noise.
 #
-# DEV IS IN THE FITTING SET, so --best-metric srcc_utt selects on an IN-SAMPLE score, dev
-# predictions are written as dev_<metric>_<kind>_IN-SAMPLE.csv, and both checkpoints are kept
-# with the final-step one the safer default downstream. Same three consequences spelled out in
-# ../strong/; the member lists frozen in ../../weak/make_submission.py must not be re-derived
-# from anything this job writes.
+# THE l4 CELL IS THE GRID'S OWN CELL. Output goes to egs/ssl_runs_traindev/ with the same
+# <encoder>-<loss>-<interaction>_<metric> tags the full grid uses, and every job in this
+# directory skips an arm whose final checkpoint exists. So the probe's layer-4 run IS the
+# grid's mse:baseline run -- when the grid follows at layer 4, it starts three arms in, and
+# nothing is computed twice. Different layers get different tags, so nothing collides either.
 #
-# EVALUATION IS ON THE LABELLED TEST SPLIT, which is the point of the run: test predictions are
-# written inline for both checkpoints and scored in the summary against
-# sets/vmc2026_track3_test_with_labels.csv. Scoring only -- nothing in the training loop reads
-# those labels, and no member selection may either.
+# COST. The l4 row is MEASURED by voicemos-track3-ssl-sizing.sh on an L40S. The l8 and
+#        last-layer rows are EXTRAPOLATED from it in proportion to GFLOP/utt (counted with
+#        FlopCounterMode at the corpus mean duration of 4.78 s), so treat them as +/-30%.
+#        Their batch sizes are set from the l4 measurement scaled by depth -- l4 peaked at
+#        11.7-14.8 GiB of 46 at batch 16, and activation memory is roughly linear in layers,
+#        so the deeper arms step down to keep the effective batch at 16 without an OOM.
 #
-# MEASURED COST on an L40S at batch 16 x 1 (see voicemos-track3-ssl-sizing.sh):
+#   wavlm-base-plus-l4   ~1.4 h  (measured, batch 16 x 1)
+#   wavlm-base-plus-l8   ~1.9 h  (extrapolated, batch 8 x 2)
+#   wavlm-base-plus-l12  ~2.4 h  (extrapolated, batch 8 x 2)
+#   inference           3 arms x 4 passes x ~2 min = ~25 min
+#   total               ~6.2 h, hence 9 h with slack.
 #
-#   0.254 s/step and 11.7 GiB at batch 16 x 1; 37.7M backbone, layer 4 of 12, dim 768
-#   training               4 arms x ~1.2h = ~4.7h
-#   inference              4 arms x 4 passes x ~2 min = ~35 min
-#   total                  ~5.4h, hence 8 h with slack.
+# HOW TO READ THE RESULT. The summary ranks the three layers by held-out test UTT-SRCC. The
+# reference lines printed underneath are what the frozen features scored on dev and what the
+# speaker/accent-ID grid scored on test, so a layer that lands below its own frozen-feature
+# ridge is evidence that fine-tuning is hurting, not that the layer is wrong.
 #
-# NOTHING IS OVERWRITTEN: checkpoints go to egs/ssl_runs_traindev/, a sibling of
-# egs/ensemble_runs_traindev/, with the same <encoder>-<loss>-<interaction>_<metric> tags.
+# DEV IS IN THE FITTING SET: --best-metric srcc_utt selects on an IN-SAMPLE score, dev
+# predictions carry the _IN-SAMPLE suffix, both checkpoints are kept and the final-step one is
+# the safer default. Test labels are read by the summary only -- never by training, never by
+# selection.
 #
-# RESUMABLE: an arm whose final checkpoint exists is skipped, as is any prediction file already
-# on disk. Resubmit the same script after a timeout or preemption.
+# RESUMABLE and ARMS-overridable, like every job in this directory:
+#   sbatch --export=ALL,ARMS="wavlm-base-plus-l12:mse:baseline" --time=05:00:00 \
+#       track3/jobs/ssl/voicemos-track3-ssl-layer-probe-wavlm-base.sh
 #
-# To run one cell, or to split across shorter allocations:
-#   sbatch --export=ALL,ARMS="wavlm-base-plus-l4:coral:bilinear" --time=03:00:00 \
-#       track3/jobs/ssl/voicemos-track3-ssl-traindev-wavlm-base-accent.sh
-#
-# Deliberately NOT using `set -e`: if one arm fails the rest should still run.
+# Deliberately NOT using `set -e`: if one layer fails the others should still run.
 
 START_TIME=$SECONDS
 echo "Job $SLURM_JOB_ID starting on $(hostname) at $(date)"
@@ -109,21 +115,13 @@ f = sorted(glob.glob('../baseline/data/vmc2026_track3_train_phase_distro_v3_syn/
 torchaudio.load(f)
 print('torchaudio.load OK')" || { echo "ERROR: torchaudio cannot load wavs"; exit 1; }
 
-# The SSL weights come from torchaudio's own cache, not the encoder cache the sv: models use.
-python -c "
-from encoders import build_encoder
-e = build_encoder('wavlm-base-plus-l4')
-print('wavlm-base-plus-l4 ready, output_dim', e.output_dim)" \
-    || { echo "ERROR: cannot build wavlm-base-plus-l4"; exit 1; }
-
 echo "NVIDIA SMI:"; nvidia-smi
 NUM_WORKERS=${SLURM_CPUS_PER_TASK:-8}
 
 ##################################################################
 # Configuration
 ##################################################################
-METRIC=acc_sim
-ENC=wavlm-base-plus-l4
+METRIC=${METRIC:-spk_sim}
 
 DR=../baseline/data/vmc2026_track3_train_phase_distro_v3_syn
 EV=../baseline/data/vmc2026_track3_eval_phase_distro_v3_syn
@@ -133,13 +131,18 @@ DEV_LABELS=${DEV_LABELS:-$EV/sets/dev_with_labels.csv}
 TEST_CSV=${TEST_CSV:-$EV/sets/test.csv}
 TEST_LABELS=${TEST_LABELS:-$EV/sets/vmc2026_track3_test_with_labels.csv}
 
-ALL_ARMS="$ENC:mse:baseline $ENC:mse:bilinear $ENC:coral:baseline $ENC:coral:bilinear"
+# One arm per layer, cheapest layer first, all at mse + baseline.
+ALL_ARMS="wavlm-base-plus-l4:mse:baseline wavlm-base-plus-l8:mse:baseline wavlm-base-plus-l12:mse:baseline"
 ARMS=${ARMS:-"$ALL_ARMS"}
 
-BATCH=${BATCH:-16}
-ACCUM=${ACCUM:-1}
+# Batch is per-arm, not per-job: these three differ by up to 6x in activation memory. The
+# effective batch stays 16 in every case, so the arms remain comparable to each other and to
+# every other grid in this project. Captured here, before the loop, because the per-arm
+# defaults are assigned inside it -- reading ${BATCH:-...} there would pin every later arm to
+# whatever the first arm chose.
+BATCH_OVERRIDE=${BATCH:-}
+ACCUM_OVERRIDE=${ACCUM:-}
 LR=${LR:-1e-3}
-BILINEAR_RANK=${BILINEAR_RANK:-64}
 TRAIN_STEPS=${TRAIN_STEPS:-20000}
 FREEZE_STEPS=${FREEZE_STEPS:-5000}
 EVAL_STEPS=${EVAL_STEPS:-1000}
@@ -149,16 +152,10 @@ BEST_METRIC=${BEST_METRIC:-srcc_utt}
 OUTROOT=${OUTROOT:-egs/ssl_runs_traindev}
 mkdir -p "$OUTROOT"
 
-for F in "$DEV_LABELS" "$TEST_CSV"; do
+for F in "$DEV_LABELS" "$TEST_CSV" "$TRAIN_CSV"; do
     [ -f "$F" ] || { echo "ERROR: missing $F"; exit 1; }
 done
 
-if [ ! -f "$TRAIN_CSV" ]; then
-    echo "ERROR: $TRAIN_CSV missing. Build it with track3/jobs/strong/ or the weak train+dev job."
-    exit 1
-fi
-
-# This job is the TRAIN+DEV variant; the file naming below would lie on a held-out fitting set.
 python - "$TRAIN_CSV" "$DEV_LABELS" <<'PY' || exit 1
 import csv, sys
 tr = {(r["wav_a_path"], r["wav_b_path"]) for r in csv.DictReader(open(sys.argv[1]))}
@@ -170,21 +167,29 @@ if n != len(dv):
 PY
 
 echo "=================================================================="
-echo "SSL deep grid, fitted on TRAIN + DEV   metric=$METRIC   encoder=$ENC"
+echo "LAYER PROBE, WavLM Base+, fitted on TRAIN + DEV   metric=$METRIC"
 echo "arms: $ARMS"
-echo "batch ${BATCH}x${ACCUM} (effective 16), moe head, freeze $FREEZE_STEPS/$TRAIN_STEPS, lr=$LR"
-echo "select: best $BEST_METRIC on dev -- IN-SAMPLE, dev is in the fitting set"
-echo "score : $TEST_LABELS (held out, report only)"
-echo "out   : $OUTROOT/<encoder>-<loss>-<interaction>_$METRIC/"
+echo "batch: per-arm by depth (16x1 / 8x2 / 4x4), effective 16; moe head, mse + baseline, lr=$LR"
+echo "out : $OUTROOT/  (shared with the full grid; matching arms are skipped)"
 echo "=================================================================="
 
 FAILED=()
 
 ##################################################################
-# Grid
+# Probe
 ##################################################################
 for ARM in $ARMS; do
     IFS=':' read -r E LOSS IX <<< "$ARM"
+
+    # Depth drives activation memory; keep effective batch = BATCH x ACCUM = 16.
+    LAYER=${E##*-l}
+    if [ "$LAYER" -le 4 ]; then   ARM_BATCH=16; ARM_ACCUM=1
+    elif [ "$LAYER" -le 12 ]; then ARM_BATCH=8;  ARM_ACCUM=2
+    else                           ARM_BATCH=4;  ARM_ACCUM=4
+    fi
+    BATCH=${BATCH_OVERRIDE:-$ARM_BATCH}
+    ACCUM=${ACCUM_OVERRIDE:-$ARM_ACCUM}
+
     TAG="${E}-${LOSS}-${IX}_${METRIC}"
     OUT="$OUTROOT/$TAG"
     echo ""
@@ -204,7 +209,6 @@ for ARM in $ARMS; do
             --head moe \
             --objective "$LOSS" \
             --interaction "$IX" \
-            --bilinear-rank "$BILINEAR_RANK" \
             --batch-size "$BATCH" \
             --accumulate-steps "$ACCUM" \
             --lr "$LR" \
@@ -249,15 +253,15 @@ for ARM in $ARMS; do
 done
 
 ##################################################################
-# Summary
+# Summary -- the layer ranking this job exists to produce
 ##################################################################
 echo ""
 echo "=================================================================="
-echo "All six metrics per arm and checkpoint:"
+echo "LAYER PROBE RESULT, WavLM Base+"
 echo ""
 python - "$METRIC" "$OUTROOT" "$ARMS" \
     "dev|$DEV_LABELS|dev_{metric}_{kind}_IN-SAMPLE.csv|IN-SAMPLE -- dev is in the fitting set, this estimates nothing" \
-    "test|$TEST_LABELS|test_{metric}_{kind}.csv|held out -- the evaluation this grid is for" <<'PY'
+    "test|$TEST_LABELS|test_{metric}_{kind}.csv|held out -- the number that decides the layer" <<'PY'
 import csv, sys, os
 import numpy as np, scipy.stats
 from collections import defaultdict
@@ -287,7 +291,7 @@ for spec in sys.argv[4:]:
     if not os.path.exists(labels):
         print(f"    no labels at {labels}, skipping"); continue
     gt = {(r["wav_a_path"], r["wav_b_path"]): r for r in csv.DictReader(open(labels))}
-    hdr = (f"{'arm':<44}{'ckpt':>6}{'n':>6}{'uMSE':>8}{'uLCC':>8}{'uSRCC':>8}"
+    hdr = (f"{'layer':<28}{'ckpt':>6}{'n':>6}{'uMSE':>8}{'uLCC':>8}{'uSRCC':>8}"
            f"{'sMSE':>8}{'sLCC':>8}{'sSRCC':>8}")
     print(f"{metric}\n{hdr}\n{'-'*len(hdr)}")
     rows = []
@@ -297,29 +301,37 @@ for spec in sys.argv[4:]:
         for kind in ("best", "final"):
             f = f"{outroot}/{tag}/" + pattern.format(metric=metric, kind=kind)
             if not os.path.exists(f):
-                print(f"{enc+'-'+loss+'-'+ix:<44}{kind:>6}{'MISSING':>9}"); continue
+                print(f"{enc:<28}{kind:>6}{'MISSING':>9}"); continue
             s = score(f, gt)
             if s is None:
-                print(f"{enc+'-'+loss+'-'+ix:<44}{kind:>6}{'no rows':>9}"); continue
-            rows.append((f"{enc}-{loss}-{ix}", kind, s))
-            print(f"{enc+'-'+loss+'-'+ix:<44}{kind:>6}{s[0]:>6}"
-                  + "".join(f"{v:>8.3f}" for v in s[1:]))
-    if rows:
-        print(f"\nranked by UTT-SRCC ({name}):")
-        for nm, kind, s in sorted(rows, key=lambda r: -r[2][3])[:10]:
+                print(f"{enc:<28}{kind:>6}{'no rows':>9}"); continue
+            rows.append((enc, kind, s))
+            print(f"{enc:<28}{kind:>6}{s[0]:>6}" + "".join(f"{v:>8.3f}" for v in s[1:]))
+    if rows and name == "test":
+        print(f"\nLAYER RANKING by held-out test UTT-SRCC:")
+        for nm, kind, s in sorted(rows, key=lambda r: -r[2][3]):
             print(f"  {s[3]:.3f}  {nm} [{kind}]")
+        winner = sorted(rows, key=lambda r: -r[2][3])[0]
+        spread = winner[2][3] - sorted(rows, key=lambda r: r[2][3])[0][2][3]
+        print(f"\n  winner: {winner[0]}   spread across layers: {spread:.3f}")
+        print("  A spread under ~0.02 is inside the noise this test set can resolve;")
+        print("  prefer the cheapest layer in that case rather than the nominal winner.")
 PY
 
 echo ""
-echo "Reference on the same test set (600 pairs), from the speaker/accent-ID grid:"
-echo "  spk_sim  best single deep cell        uSRCC 0.588   deep top-8 ensemble 0.575"
-echo "  acc_sim  best single deep cell        uSRCC 0.478   deep top-8 ensemble 0.478"
-echo "  spk_sim  weak top-16 (frozen SSL)     uSRCC 0.606   + deep top-8  0.609"
-echo "  acc_sim  weak top-16 (frozen SSL)     uSRCC 0.523   + deep top-8  0.528"
+echo "Reference, same encoders, FROZEN features + ridge, held-out dev UTT-SRCC:"
+echo "  spk_sim  l4 0.535  l8 0.421  l12 0.343     acc_sim  l4 0.531  l8 0.469  l12 0.327"
 echo ""
-echo "The weak rows are ridge regressions on THESE encoders' frozen features. A fine-tuned"
-echo "cell below that lands under them is evidence that gradient fine-tuning is what hurts,"
-echo "not the representation."
+echo "Reference on the same test set (600 pairs):"
+echo "  spk_sim  best single deep cell (w24s4ep4)   uSRCC 0.588"
+echo "  spk_sim  deep top-8 ensemble                uSRCC 0.575"
+echo "  spk_sim  weak top-16 (frozen SSL + ridge)   uSRCC 0.606"
+echo ""
+echo "NEXT STEP. Set the winning layer in the full grid, then submit it:"
+echo "  sbatch --export=ALL,ARMS=\"<enc>-l<N>:mse:baseline <enc>-l<N>:mse:bilinear \\"
+echo "     <enc>-l<N>:coral:baseline <enc>-l<N>:coral:bilinear\" \\"
+echo "     track3/jobs/ssl/voicemos-track3-ssl-traindev-wavlm-base-speaker.sh"
+echo "The mse:baseline arm is already on disk from this probe and will be skipped."
 echo ""
 echo "TensorBoard:  tensorboard --logdir $(pwd)/$OUTROOT"
 
