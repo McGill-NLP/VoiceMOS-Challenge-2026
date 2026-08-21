@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:l40s:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --time=08:00:00
+#SBATCH --time=13:00:00
 #SBATCH --output=%x-%j.out
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=david.guzman@mila.quebec
@@ -34,12 +34,35 @@
 # 20,000 steps, lr 1e-3, effective batch 16, --best-metric srcc_utt, fitted on
 # sets/train_plus_dev.csv (3,400 pairs, 23 systems).
 #
-# THE STACK IS TRUNCATED AT LAYER 4. encoders.py deletes layers 5+ rather than computing and
-# discarding them, which makes this a 37.7M-parameter backbone instead of the full bundle
-# -- comparable to eres2netv2-w24s4ep4's 53.5M, and the reason a 315M-parameter model is
-# affordable here at all. Outputs are identical to the untruncated model at atol 1e-5. Layer 4
-# is the weak sweep's winner for every bundle and both targets; -l8 and the last layer are
-# registered in ENCODER_REGISTRY if the ablation is ever worth extending.
+# THE STACK IS TRUNCATED AT THE READ LAYER. encoders.py deletes the layers above it rather
+# than computing and discarding them, making this a 37.7M backbone instead of the full
+# bundle. Outputs are identical to the untruncated model at atol 1e-5.
+#
+# THE LAYER WAS CHOSEN BY MEASUREMENT, not inherited. The frozen-feature sweep in ../../weak/
+# ranked layer 4 first for every bundle, but under fine-tuning that reverses for the two pre-LN
+# models. voicemos-track3-ssl-layer-probe-*.sh scored l4 / l8 / last on held-out test spk_sim:
+#
+#   wavlm-large   0.539  0.571  0.522     l8 - l4 = +0.029 [-0.002, +0.063], P(better) 0.97
+#   xlsr-300m     0.566  0.593  0.562     l8 - l4 = +0.027 [+0.001, +0.053], P(better) 0.98
+#   wavlm-base+   0.537   div    div      l8 and l12 diverged; see below
+#
+# Fine-tuning HURTS at layer 4 -- it is already general, so gradients only overfit it -- and
+# helps more with depth (+0.07 to +0.11 over the frozen ridge at the last layer). Layer 8 is
+# where the two effects cross. The last layer wins neither: it gains most from fine-tuning but
+# starts too far back to catch up, and costs 2.3x as much.
+#
+# LAYERS ARE NOT WORTH POOLING. Residual correlation between l4/l8/last of one encoder is
+# 0.88-0.97 on test, and averaging all three moves UTT-SRCC by +0.006 (wavlm-large) and +0.000
+# (xlsr). One layer per encoder is the right shape; the probe's other checkpoints stay on disk
+# as ensemble candidates but do not need their own grids.
+#
+# WHY LAYER 4 HERE AND LAYER 8 ELSEWHERE. WavLM Base+ is the only one of the three bundles with
+# layer_norm_first=False -- a post-LN transformer, which is known to be unstable to fine-tune
+# without warmup. Its l8 and l12 probe arms were healthy at 0.92 dev UTT-SRCC at the end of the
+# frozen phase, then collapsed to constant predictions within 5,000 steps of the backbone
+# unfreezing (prediction sd 0.000, nan correlations). Four post-LN layers tolerate the abrupt
+# unfreeze at step 5,000; eight do not. If this arm is worth deepening later, it needs a
+# backbone-lr warmup or --backbone-lr-mult 0.01, not just a different layer.
 #
 # DEV IS IN THE FITTING SET, so --best-metric srcc_utt selects on an IN-SAMPLE score, dev
 # predictions are written as dev_<metric>_<kind>_IN-SAMPLE.csv, and both checkpoints are kept
@@ -52,12 +75,14 @@
 # sets/vmc2026_track3_test_with_labels.csv. Scoring only -- nothing in the training loop reads
 # those labels, and no member selection may either.
 #
-# MEASURED COST on an L40S at batch 16 x 1 (see voicemos-track3-ssl-sizing.sh):
+# MEASURED COST on an L40S at batch 16 x 1 (effective 16). Per-arm times are the
+# layer probe's own end-to-end wall times, which include dev evaluation, checkpointing and
+# inference -- about 25% above the pure step time voicemos-track3-ssl-sizing.sh measured:
 #
-#   0.254 s/step and 11.7 GiB at batch 16 x 1; 37.7M backbone, layer 4 of 12, dim 768
-#   training               4 arms x ~1.2h = ~4.7h
+#   37.7M backbone, layer 4 of 12, dim 768
+#   training               4 arms x ~2.4h = ~9.6h
 #   inference              4 arms x 4 passes x ~2 min = ~35 min
-#   total                  ~5.4h, hence 8 h with slack.
+#   total                  ~10.2h, hence 13 h with slack.
 #
 # NOTHING IS OVERWRITTEN: checkpoints go to egs/ssl_runs_traindev/, a sibling of
 # egs/ensemble_runs_traindev/, with the same <encoder>-<loss>-<interaction>_<metric> tags.
