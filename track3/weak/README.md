@@ -403,9 +403,11 @@ swapping one speaker-ID encoder for another did not. The mechanism worked.
 
 `sets/vmc2026_track3_test_with_labels.csv`, 600 pairs, 25 systems. Every composition is the
 frozen held-out member list, so nothing here was selected on test. Combiner unchanged:
-unweighted mean, clipped to [1, 5]. `deep [train+dev]` members come from
-[../unified/egs/ensemble_runs_traindev/](../unified/egs/ensemble_runs_traindev/), the same 4x2x2
-grid refit on train+dev by [../jobs/strong/](../jobs/strong/).
+unweighted mean, clipped to [1, 5]. **`deep` here means the four speaker/accent-ID encoders**
+fine-tuned — `ecapa-voxceleb`, `commonaccent-ecapa`, `eres2netv2`, `eres2netv2-w24s4ep4` — from
+[../unified/egs/ensemble_runs_traindev/](../unified/egs/ensemble_runs_traindev/), the 4x2x2 grid
+refit on train+dev by [../jobs/strong/](../jobs/strong/). Fine-tuned **SSL** encoders are a
+separate pool, in the next section.
 
 | pool | n | uMSE | uLCC | uSRCC | sMSE | sLCC | sSRCC |
 |---|---|---|---|---|---|---|---|
@@ -442,6 +444,61 @@ finding that `nnls` and `ridge` land within 0.004 of the unweighted mean.
 test 0.609 / 0.528: `spk_sim` loses 0.014, `acc_sim` 0.075. Test contains four systems absent
 from train against dev's two, and accent similarity is the target that generalises worse.
 
+### Test set — fine-tuned SSL encoders (`ssl`, distinct from `deep` above)
+
+The same 2x2 objective x interaction grid, on SSL backbones instead of the four speaker/accent-ID
+ones: [../jobs/ssl/](../jobs/ssl/), fitted on train+dev, checkpoints in
+[../unified/egs/ssl_runs_traindev/](../unified/egs/ssl_runs_traindev/). These are the *same*
+encoders the weak learners use, now with gradients reaching them.
+
+**The read layer was measured, not inherited.** A layer probe (3 cells per bundle, mse+baseline)
+scored l4 / l8 / last on held-out test `spk_sim`: `wavlm-large` 0.539 / **0.571** / 0.522,
+`xlsr-300m` 0.566 / **0.593** / 0.562. Layer 8 wins both, reversing the frozen-feature ranking
+above — fine-tuning *hurts* at layer 4 and helps more with depth, and layer 8 is where the two
+effects cross. `WAVLM_BASE_PLUS` is post-LN (`layer_norm_first=False`) and its l8/l12 arms
+collapsed to constant predictions within 5,000 steps of the backbone unfreezing, so it runs at
+l4, its only stable depth.
+
+Individual cells, test UTT-SRCC, final checkpoint:
+
+| encoder | mse+base | mse+bil | coral+base | coral+bil |
+|---|---|---|---|---|
+| **`spk_sim`** | | | | |
+| `xlsr-300m-l8` | 0.593 | **0.597** | 0.571 | 0.589 |
+| `wavlm-large-l8` | 0.567 | 0.568 | 0.560 | 0.561 |
+| `wavlm-base-plus-l4` | 0.537 | 0.522 | 0.536 | 0.517 |
+| **`acc_sim`** | | | | |
+| `xlsr-300m-l8` | 0.471 | 0.468 | 0.488 | 0.479 |
+| `wavlm-large-l8` | 0.461 | 0.479 | 0.466 | **0.490** |
+| `wavlm-base-plus-l4` | 0.445 | 0.455 | 0.425 | 0.466 |
+
+Pools, test UTT-SRCC / SYS-SRCC (`ssl8` = the 8 l8 cells; `deep8` and `weak16` as above):
+
+| pool | n | `spk_sim` | `acc_sim` |
+|---|---|---|---|
+| weak top-16 [train+dev] — **submitted** | 16 | 0.606 / 0.923 | 0.523 / 0.882 |
+| deep8 + weak16 | 24 | 0.609 / 0.935 | 0.528 / 0.876 |
+| ssl8 only | 8 | 0.594 / 0.939 | 0.499 / 0.839 |
+| all 12 SSL cells (adds `wavlm-base-plus-l4`) | 12 | 0.582 / 0.928 | 0.493 / 0.838 |
+| **ssl8 + weak16** | 24 | **0.612** / 0.943 | **0.529** / 0.869 |
+| ssl8 + deep8 + weak16 | 32 | 0.611 / 0.937 | 0.528 / 0.876 |
+
+**Fine-tuned SSL gives the best single models in the project** — `xlsr-300m-l8-mse-bilinear` at
+0.597 `spk_sim`, against 0.588 for the best speaker/accent-ID cell and 0.575 for that pool's
+whole top-8 ensemble. Six of the eight l8 cells beat the entire `deep8` ensemble on their own.
+
+**They are better ensemble members than `deep8`, and still change almost nothing.** Swapping
+`deep8` for `ssl8` alongside `weak16` is the best pool on both targets, but against the
+submitted weak-only system that is +0.005 / +0.006 with CIs spanning zero (P(better) 0.79), and
+adding `ssl8` on top of `deep8 + weak16` is +0.002 / +0.001. Cross-pool residual correlation is
+0.965 (ssl-vs-weak) and 0.966 (ssl-vs-deep), *above* the 0.955 weak-vs-deep that was already too
+high to gain from. The ceiling in this project is decorrelation, and a fourth pool of the same
+encoders does not move it.
+
+**`wavlm-base-plus-l4` should be dropped.** Adding its four cells costs the pool 0.012 uSRCC on
+`spk_sim` (0.594 -> 0.582) — the k=16-vs-k=58 dynamic again, with weak members and no diversity
+to pay for them.
+
 ---
 
 ## Findings
@@ -452,11 +509,14 @@ bundle, and UTMOS22 used only the last layer. Under PCA-128 the gap looked enorm
 deep layers by +0.244 and +0.292, so much of that gap was PCA damage rather than layer
 quality. The ordering survives; the magnitude does not.
 
-**Frozen SSL features beat fine-tuned encoders.** The single best model anywhere in this
-project is `WAVLM_LARGE_l4__full__ridge` at **0.602** on `spk_sim` — a ridge regression on
-frozen WavLM-Large layer-4 embeddings, fitted in about ten seconds. It beats every fine-tuned
-deep model (best 0.569) and nearly matches the entire deep top-8 ensemble (0.579). On 2,800
-pairs, gradient fine-tuning is contributing much less than assumed.
+**Frozen SSL features beat fine-tuned encoders — at layer 4, and that qualifier turned out to
+matter.** The best model on held-out dev is `WAVLM_LARGE_l4__full__ridge` at **0.602** on
+`spk_sim`, a ridge fitted in about ten seconds, beating every fine-tuned speaker/accent-ID model
+(best 0.569) and nearly matching that whole pool's top-8 ensemble (0.579). But once the SSL
+encoders were fine-tuned properly (see the SSL test section), the claim inverts with depth: on
+test, fine-tuning loses to its own frozen ridge at layer 4 (-0.003 to -0.051) and wins at layer
+8 (+0.016 / +0.024) and the last layer (+0.074 / +0.105). Early layers are already general and
+gradients only overfit them; deep layers are pretraining-specific and need the adaptation.
 
 **A multilingual SSL model beats the purpose-built accent encoder.** On `acc_sim`,
 `WAV2VEC2_XLSR_300M` and `WAVLM_LARGE` layer-4 models reach 0.516-0.542, ahead of
