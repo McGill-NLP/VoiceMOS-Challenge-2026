@@ -245,3 +245,5 @@ track3/speechllm_judge/SpeechLLM-as-Judges/
 track3/speechllm_judge/logs
 track3/papers
 *.out
+
+track3/rank-n-contrast/egs/
