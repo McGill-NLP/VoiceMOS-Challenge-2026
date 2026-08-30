@@ -1,0 +1,40 @@
+{
+  "metric": "spk_sim",
+  "combiner": "unweighted mean, no fitted parameters",
+  "n_members": 16,
+  "deep_k": 0,
+  "weak_k": 16,
+  "selection": "FROZEN from the held-out runs (dev not in training); not re-derived",
+  "weak_dir": "egs/weak_traindev/preds",
+  "weak_fitted_on_dev": true,
+  "dev_scores_are_in_sample": true,
+  "dev_metrics": {
+    "uMSE": 0.1515,
+    "uLCC": 0.8869,
+    "uSRCC": 0.8751,
+    "sMSE": 0.0193,
+    "sLCC": 0.9807,
+    "sSRCC": 0.9536
+  },
+  "note": "weak top-16 ONLY, no deep members; weak fitted on train+dev (3400 pairs), no PCA",
+  "pred_mean": 3.818,
+  "pred_sd": 0.4003,
+  "members": [
+    "weak::WAVLM_LARGE_l4__full__ridge",
+    "weak::WAVLM_LARGE_l4__compact__ridge",
+    "weak::WAV2VEC2_XLSR_300M_l4__compact__ridge",
+    "weak::WAV2VEC2_XLSR_300M_l4__full__ridge",
+    "weak::WAVLM_LARGE_l8__full__ridge",
+    "weak::WAV2VEC2_XLSR_300M_l8__full__ridge",
+    "weak::WAVLM_BASE_PLUS_l4__full__ridge",
+    "weak::eres2netv2__full__ksvr",
+    "weak::WAVLM_LARGE_l8__compact__ridge",
+    "weak::eres2netv2__full__ridge",
+    "weak::eres2netv2__full__hgb",
+    "weak::eres2netv2-w24s4ep4__full__ksvr",
+    "weak::eres2netv2-w24s4ep4__full__hgb",
+    "weak::ecapa-voxceleb__full__hgb",
+    "weak::WAVLM_BASE_PLUS_l4__compact__ridge",
+    "weak::eres2netv2__compact__ksvr"
+  ]
+}

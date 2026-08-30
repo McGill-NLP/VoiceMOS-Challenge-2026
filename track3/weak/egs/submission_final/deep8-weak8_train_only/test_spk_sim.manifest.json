@@ -1,0 +1,40 @@
+{
+  "metric": "spk_sim",
+  "combiner": "unweighted mean, no fitted parameters",
+  "n_members": 16,
+  "deep_k": 8,
+  "weak_k": 8,
+  "selection": "FROZEN from the held-out runs (dev not in training); not re-derived",
+  "weak_dir": "egs/weak_nopca/preds",
+  "weak_fitted_on_dev": false,
+  "dev_scores_are_in_sample": false,
+  "dev_metrics": {
+    "uMSE": 0.3368,
+    "uLCC": 0.6518,
+    "uSRCC": 0.6196,
+    "sMSE": 0.053,
+    "sLCC": 0.952,
+    "sSRCC": 0.9308
+  },
+  "note": "deep top-8 (train) + weak top-8 from egs/weak_nopca/preds",
+  "pred_mean": 3.8417,
+  "pred_sd": 0.4335,
+  "members": [
+    "deep::eres2netv2-w24s4ep4-mse-baseline",
+    "deep::eres2netv2-w24s4ep4-mse-bilinear",
+    "deep::eres2netv2-w24s4ep4-coral-baseline",
+    "deep::eres2netv2-coral-baseline",
+    "deep::eres2netv2-mse-bilinear",
+    "deep::eres2netv2-w24s4ep4-coral-bilinear",
+    "deep::eres2netv2-coral-bilinear",
+    "deep::eres2netv2-mse-baseline",
+    "weak::WAVLM_LARGE_l4__full__ridge",
+    "weak::WAVLM_LARGE_l4__compact__ridge",
+    "weak::WAV2VEC2_XLSR_300M_l4__compact__ridge",
+    "weak::WAV2VEC2_XLSR_300M_l4__full__ridge",
+    "weak::WAVLM_LARGE_l8__full__ridge",
+    "weak::WAV2VEC2_XLSR_300M_l8__full__ridge",
+    "weak::WAVLM_BASE_PLUS_l4__full__ridge",
+    "weak::eres2netv2__full__ksvr"
+  ]
+}
