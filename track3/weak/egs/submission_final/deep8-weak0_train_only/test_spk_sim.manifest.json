@@ -1,0 +1,32 @@
+{
+  "metric": "spk_sim",
+  "combiner": "unweighted mean, no fitted parameters",
+  "n_members": 8,
+  "deep_k": 8,
+  "weak_k": 0,
+  "selection": "FROZEN from the held-out runs (dev not in training); not re-derived",
+  "weak_dir": "egs/weak_nopca/preds",
+  "weak_fitted_on_dev": false,
+  "dev_scores_are_in_sample": false,
+  "dev_metrics": {
+    "uMSE": 0.3488,
+    "uLCC": 0.6211,
+    "uSRCC": 0.5792,
+    "sMSE": 0.0494,
+    "sLCC": 0.938,
+    "sSRCC": 0.9071
+  },
+  "note": "deep top-8 ONLY, no weak members; deep fitted on train",
+  "pred_mean": 3.883,
+  "pred_sd": 0.4653,
+  "members": [
+    "deep::eres2netv2-w24s4ep4-mse-baseline",
+    "deep::eres2netv2-w24s4ep4-mse-bilinear",
+    "deep::eres2netv2-w24s4ep4-coral-baseline",
+    "deep::eres2netv2-coral-baseline",
+    "deep::eres2netv2-mse-bilinear",
+    "deep::eres2netv2-w24s4ep4-coral-bilinear",
+    "deep::eres2netv2-coral-bilinear",
+    "deep::eres2netv2-mse-baseline"
+  ]
+}

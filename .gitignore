@@ -217,6 +217,31 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Others
+# Data
 track3/data/vmc2026_track3_train_phase_distro_v3_syn
 track3/data/vmc2026_track3_train_phase_distro_v3_vctk
+track3/data/VCTK-Corpus
+track3/corn-and-coral/data
+track3/baseline/data
+
+# Checkpoints
+track3/speechllm_judge/models
+track3/encoders/**/*.pt
+track3/utmos-approach/**/*.pt
+track3/baseline/**/*.pt
+track3/unified/**/*.pt
+
+# Features
+track3/weak/egs/features/**/*.npz
+
+
+# TensorBoard logs
+tensorboard/
+events.out.tfevents.*
+
+# Others
+dev.ipynb
+track3/speechllm_judge/SpeechLLM-as-Judges/
+track3/speechllm_judge/logs
+track3/papers
+*.out
