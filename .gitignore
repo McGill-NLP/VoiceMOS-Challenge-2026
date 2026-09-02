@@ -218,9 +218,9 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Data
-track3/data/vmc2026_track3_train_phase_distro_v3_syn
-track3/data/vmc2026_track3_train_phase_distro_v3_vctk
-track3/data/VCTK-Corpus
+# The whole directory: it holds challenge-provided data and the splits derived
+# from it, which must not be redistributed.
+track3/data/
 track3/corn-and-coral/data
 track3/baseline/data
 
