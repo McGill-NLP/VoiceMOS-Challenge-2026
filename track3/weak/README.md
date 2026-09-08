@@ -412,6 +412,8 @@ separate pool, in the next section.
 | pool | n | uMSE | uLCC | uSRCC | sMSE | sLCC | sSRCC |
 |---|---|---|---|---|---|---|---|
 | **`spk_sim`** | | | | | | | |
+| B1 zero-shot cosine — *official baseline* | 1 | 10.740 | 0.448 | 0.414 | 11.699 | 0.843 | 0.874 |
+| B2 fine-tuned ECAPA — *official baseline* | 1 | 0.561 | 0.401 | 0.403 | 0.080 | 0.856 | 0.914 |
 | deep top-8 [train+dev] only | 8 | 0.432 | 0.549 | 0.575 | 0.059 | 0.891 | 0.913 |
 | weak top-16 [train] | 16 | 0.403 | **0.593** | **0.615** | 0.073 | 0.891 | 0.922 |
 | weak top-16 [train+dev] — **submitted** | 16 | **0.400** | 0.589 | 0.606 | 0.058 | 0.898 | 0.923 |
@@ -419,12 +421,43 @@ separate pool, in the next section.
 | deep top-8 [train+dev] + weak top-16 [train+dev] | 24 | 0.402 | 0.589 | 0.609 | 0.057 | 0.902 | 0.935 |
 | deep all-16 [train+dev] + weak top-16 [train+dev] | 32 | 0.408 | 0.583 | 0.607 | 0.063 | 0.897 | 0.937 |
 | **`acc_sim`** | | | | | | | |
+| B1 zero-shot cosine — *official baseline* | 1 | 10.581 | 0.403 | 0.386 | 11.370 | 0.810 | 0.838 |
+| B2 fine-tuned ECAPA — *official baseline* | 1 | 0.632 | 0.318 | 0.316 | 0.078 | 0.734 | 0.786 |
 | deep top-8 [train+dev] only | 8 | 0.494 | 0.467 | 0.478 | 0.060 | 0.803 | 0.864 |
 | weak top-16 [train] | 16 | 0.462 | 0.512 | 0.514 | 0.054 | 0.862 | **0.885** |
 | weak top-16 [train+dev] — **submitted** | 16 | **0.457** | 0.517 | 0.523 | **0.046** | **0.866** | 0.882 |
 | deep top-8 [train] + weak top-16 [train+dev] | 24 | 0.458 | **0.521** | **0.530** | 0.048 | 0.853 | 0.868 |
 | deep top-8 [train+dev] + weak top-16 [train+dev] | 24 | 0.461 | 0.517 | 0.528 | 0.048 | 0.855 | 0.876 |
 | deep all-16 [train+dev] + weak top-16 [train+dev] | 32 | 0.463 | 0.514 | 0.522 | 0.050 | 0.847 | 0.863 |
+
+**The official baselines had to be run ourselves.** `official-egs/` ships dev predictions
+only, so both baselines were re-run over `sets/test.csv` with the released checkpoints and the
+organisers' own [../baseline/inference.py](../baseline/inference.py); predictions and logs are in
+[../official-egs/baseline_test/](../official-egs/baseline_test/). Two checks that the run is
+sound: rescoring the shipped dev CSVs with our metric code reproduces the published dev table
+exactly (0.451 / 0.440 uSRCC), and the zero-shot test predictions match cosines computed from the
+cached `ecapa-voxceleb.npz` embeddings to 1.3e-07.
+
+```bash
+R=data/vmc2026_track3_eval_phase_distro_v3_syn        # run from ../baseline/
+python inference.py --data-root $R --csv-path $R/sets/test.csv \
+    --out ../official-egs/baseline_test/zero_shot_test.csv --target-metric spk_sim
+for M in spk_sim acc_sim; do
+    python inference.py --data-root $R --csv-path $R/sets/test.csv \
+        --checkpoint ../official-egs/${M}_adamw_lr1e-3/model_${M}_step20000.pt \
+        --target-metric $M --out ../official-egs/baseline_test/finetuned_${M}_test.csv
+done
+```
+
+**Baseline 2 does not survive the system shift, and Baseline 1 does.** Fine-tuning ECAPA beats
+the zero-shot cosine it starts from on dev (0.451 / 0.440 against 0.432 / 0.369) and loses to it
+on test (0.403 / 0.316 against 0.414 / 0.386). The predictions are not degenerate — they span
+[1.64, 4.90] with mean 3.88 against a true mean of 3.73 — so this is genuine overfitting to the
+21 training systems, not a broken run. The two targets fail differently: on `spk_sim` the damage
+is concentrated in the four unseen systems (uSRCC 0.304 there against 0.432 on seen ones), while
+on `acc_sim` it is uniformly poor (0.276 / 0.282). Note also that system-level metrics conceal
+almost all of this, with sSRCC 0.914 on `spk_sim` — a reminder that the utterance-level column is
+the one that measures generalisation here.
 
 **Adding the deep half is a small, unresolvable gain.** Against the submitted weak-only system:
 +0.003 uSRCC on `spk_sim` (95% CI [-0.007, +0.013]) and +0.005 on `acc_sim`
