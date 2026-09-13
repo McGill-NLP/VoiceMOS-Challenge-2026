@@ -1,0 +1,159 @@
+{
+  "fitting_set": "train-without-outliers.csv",
+  "members": "frozen weak top-16",
+  "test_is_report_only": true,
+  "scores": {
+    "spk_sim": {
+      "dev": {
+        "weak-16 [train]": {
+          "uMSE": 0.339,
+          "uLCC": 0.653,
+          "uSRCC": 0.622,
+          "sMSE": 0.0554,
+          "sLCC": 0.951,
+          "sSRCC": 0.917
+        },
+        "weak-16 [no-outliers]": {
+          "uMSE": 0.3335,
+          "uLCC": 0.6523,
+          "uSRCC": 0.6197,
+          "sMSE": 0.0471,
+          "sLCC": 0.9518,
+          "sSRCC": 0.915
+        }
+      },
+      "test": {
+        "weak-16 [train]": {
+          "uMSE": 0.4036,
+          "uLCC": 0.5872,
+          "uSRCC": 0.6063,
+          "sMSE": 0.0608,
+          "sLCC": 0.8946,
+          "sSRCC": 0.9208
+        },
+        "weak-16 [train+dev] (submitted)": {
+          "uMSE": 0.4,
+          "uLCC": 0.5894,
+          "uSRCC": 0.6063,
+          "sMSE": 0.0585,
+          "sLCC": 0.8979,
+          "sSRCC": 0.9231
+        },
+        "weak-16 [no-outliers]": {
+          "uMSE": 0.3956,
+          "uLCC": 0.5887,
+          "uSRCC": 0.6065,
+          "sMSE": 0.0609,
+          "sLCC": 0.8945,
+          "sSRCC": 0.9231
+        }
+      }
+    },
+    "acc_sim": {
+      "dev": {
+        "weak-16 [train]": {
+          "uMSE": 0.3175,
+          "uLCC": 0.6233,
+          "uSRCC": 0.5967,
+          "sMSE": 0.0405,
+          "sLCC": 0.9359,
+          "sSRCC": 0.9437
+        },
+        "weak-16 [no-outliers]": {
+          "uMSE": 0.3091,
+          "uLCC": 0.6242,
+          "uSRCC": 0.5936,
+          "sMSE": 0.0324,
+          "sLCC": 0.9386,
+          "sSRCC": 0.9516
+        }
+      },
+      "test": {
+        "weak-16 [train]": {
+          "uMSE": 0.4623,
+          "uLCC": 0.5163,
+          "uSRCC": 0.5204,
+          "sMSE": 0.045,
+          "sLCC": 0.8686,
+          "sSRCC": 0.8954
+        },
+        "weak-16 [train+dev] (submitted)": {
+          "uMSE": 0.4572,
+          "uLCC": 0.5171,
+          "uSRCC": 0.5225,
+          "sMSE": 0.0455,
+          "sLCC": 0.8665,
+          "sSRCC": 0.8815
+        },
+        "weak-16 [no-outliers]": {
+          "uMSE": 0.4502,
+          "uLCC": 0.5161,
+          "uSRCC": 0.52,
+          "sMSE": 0.0414,
+          "sLCC": 0.8698,
+          "sSRCC": 0.88
+        }
+      }
+    }
+  },
+  "uSRCC_delta_vs": {
+    "spk_sim": {
+      "dev": {
+        "weak-16 [train]": {
+          "mean": -0.0025,
+          "ci95": [
+            -0.0085,
+            0.0032
+          ]
+        }
+      },
+      "test": {
+        "weak-16 [train]": {
+          "mean": 0.0001,
+          "ci95": [
+            -0.0051,
+            0.0051
+          ]
+        },
+        "weak-16 [train+dev] (submitted)": {
+          "mean": 0.0001,
+          "ci95": [
+            -0.0085,
+            0.0088
+          ]
+        }
+      }
+    },
+    "acc_sim": {
+      "dev": {
+        "weak-16 [train]": {
+          "mean": -0.0032,
+          "ci95": [
+            -0.0093,
+            0.003
+          ]
+        }
+      },
+      "test": {
+        "weak-16 [train]": {
+          "mean": -0.0004,
+          "ci95": [
+            -0.0064,
+            0.0062
+          ]
+        },
+        "weak-16 [train+dev] (submitted)": {
+          "mean": -0.0025,
+          "ci95": [
+            -0.014,
+            0.009
+          ]
+        }
+      }
+    }
+  },
+  "determinism_check": {
+    "spk_sim": 3.2862601528904634e-14,
+    "acc_sim": 2.398081733190338e-14
+  }
+}

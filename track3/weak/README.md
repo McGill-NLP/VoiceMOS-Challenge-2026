@@ -477,6 +477,32 @@ finding that `nnls` and `ridge` land within 0.004 of the unweighted mean.
 test 0.609 / 0.528: `spk_sim` loses 0.014, `acc_sim` 0.075. Test contains four systems absent
 from train against dev's two, and accent similarity is the target that generalises worse.
 
+### Weak top-16 without outlier listeners — dev and test
+
+Same frozen members, fitted on `sets/train-without-outliers.csv` (two listeners removed, all
+2,800 pairs kept) by
+[../jobs/weak/voicemos-track3-weak-ensemble-nooutliers.sh](../jobs/weak/voicemos-track3-weak-ensemble-nooutliers.sh).
+Scores in `egs/submission_final/deep0-weak16_train_no_outliers/scores.json`.
+
+| pool | uMSE | uLCC | uSRCC | sMSE | sLCC | sSRCC |
+|---|---|---|---|---|---|---|
+| **dev `spk_sim`** | | | | | | |
+| weak top-16 [train] | 0.339 | 0.653 | 0.622 | 0.055 | 0.951 | 0.917 |
+| weak top-16 [no-outliers] | **0.333** | 0.652 | 0.620 | **0.047** | 0.952 | 0.915 |
+| **dev `acc_sim`** | | | | | | |
+| weak top-16 [train] | 0.317 | 0.623 | 0.597 | 0.040 | 0.936 | 0.944 |
+| weak top-16 [no-outliers] | **0.309** | 0.624 | 0.594 | **0.032** | 0.939 | 0.952 |
+| **test `spk_sim`** | | | | | | |
+| weak top-16 [train+dev] — submitted | 0.400 | 0.589 | 0.606 | **0.058** | 0.898 | 0.923 |
+| weak top-16 [no-outliers] | **0.396** | 0.589 | 0.606 | 0.061 | 0.895 | 0.923 |
+| **test `acc_sim`** | | | | | | |
+| weak top-16 [train+dev] — submitted | 0.457 | 0.517 | 0.523 | 0.046 | 0.866 | 0.882 |
+| weak top-16 [no-outliers] | **0.450** | 0.516 | 0.520 | **0.041** | 0.870 | 0.880 |
+
+**Same ranking, lower error.** Every uSRCC difference spans zero — dev −0.002 / −0.003 against
+[train], test +0.000 [−0.008, +0.009] / −0.003 [−0.014, +0.009] against the submitted system.
+uMSE is lowest without outliers everywhere; sMSE improves except on test `spk_sim`.
+
 ### Test set — fine-tuned SSL encoders (`ssl`, distinct from `deep` above)
 
 The same 2x2 objective x interaction grid, on SSL backbones instead of the four speaker/accent-ID

@@ -247,3 +247,5 @@ track3/papers
 *.out
 
 track3/rank-n-contrast/egs/
+ICASSP_2027_Template___VoiceMOS_Challenge/
+papers/
