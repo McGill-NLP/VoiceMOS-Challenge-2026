@@ -1,0 +1,23 @@
+{
+  "n_pairs": 600,
+  "difference_definition": "accent similarity minus speaker similarity",
+  "difference_rounding_decimals": 12,
+  "gap_srcc": 0.3783688325723902,
+  "gap_mae": 0.34660007188224334,
+  "zero_gap_baseline_mae": 0.36350000000000005,
+  "gap_rmse": 0.4655387042833628,
+  "human_mean_absolute_gap": 0.36350000000000005,
+  "model_mean_absolute_gap": 0.13584250162394668,
+  "human_equal_score_pairs": 140,
+  "human_accent_higher_pairs": 231,
+  "human_speaker_higher_pairs": 229,
+  "direction_agreement_denominator": 460,
+  "direction_agreement_n_correct": 310,
+  "direction_agreement_percent": 67.3913043478261,
+  "model_label": "Submitted weak-16: recovery of attribute differences",
+  "source_files": {
+    "labels": "/network/scratch/g/guzmand/Repositories/VoiceMOS-Challenge-2026/track3/baseline/data/vmc2026_track3_eval_phase_distro_v3_syn/sets/vmc2026_track3_test_with_labels.csv",
+    "speaker_predictions": "/network/scratch/g/guzmand/Repositories/VoiceMOS-Challenge-2026/track3/weak/egs/submission_final/deep0-weak16_train_plus_dev/test_spk_sim.csv",
+    "accent_predictions": "/network/scratch/g/guzmand/Repositories/VoiceMOS-Challenge-2026/track3/weak/egs/submission_final/deep0-weak16_train_plus_dev/test_acc_sim.csv"
+  }
+}

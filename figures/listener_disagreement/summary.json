@@ -1,0 +1,21 @@
+{
+  "n_pairs": 2800,
+  "n_ratings": 13687,
+  "pairs_by_number_of_ratings": {
+    "3": 1,
+    "4": 311,
+    "5": 2488
+  },
+  "sd_definition": "sample standard deviation across listeners (ddof=1)",
+  "aggregation": "each waveform pair has equal weight; all listeners retained",
+  "speaker_mean_sd": 0.846581026026808,
+  "accent_mean_sd": 0.9194927667589221,
+  "speaker_median_sd": 0.8366600265340756,
+  "accent_median_sd": 0.8944271909999159,
+  "mean_accent_minus_speaker_sd": 0.07291174073211412,
+  "median_accent_minus_speaker_sd": 0.0,
+  "accent_higher_percent": 41.25,
+  "equal_percent": 29.964285714285715,
+  "accent_lower_percent": 28.78571428571429,
+  "source_csv": "/network/scratch/g/guzmand/Repositories/VoiceMOS-Challenge-2026/track3/baseline/data/vmc2026_track3_train_phase_distro_v3_syn/sets/train.csv"
+}
