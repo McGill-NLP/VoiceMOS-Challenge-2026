@@ -54,8 +54,8 @@ This directory does both.
 
 Thirteen feature sets from seven encoders. Speaker/accent-ID models are loaded through
 [../unified/encoders.py](../unified/encoders.py); SSL models through `torchaudio.pipelines`,
-which ships every backbone UTMOS22 used — **`fairseq` is not required**, so
-`../papers/UTMOS22/fairseq_checkpoints/download_*.sh` can be ignored.
+which ships every backbone UTMOS22 used — **`fairseq` is not required**, so UTMOS22's
+`fairseq_checkpoints/download_*.sh` scripts can be ignored.
 
 | spec | dim | pretraining | reference |
 |---|---|---|---|
@@ -120,7 +120,7 @@ needs. Use `--pca-threshold 99999` to disable it, which is what the shipped resu
 ## Learners
 
 The five families from UTMOS22's
-[`models.py`](../papers/UTMOS22/stacking/ensemble_multidomain_scripts/models.py):
+[`models.py`](https://github.com/sarulab-speech/UTMOS22/blob/master/stacking/ensemble_multidomain_scripts/models.py):
 
 | name | estimator | grid |
 |---|---|---|
@@ -714,36 +714,33 @@ despite `nnls` scoring 0.008 higher on `acc_sim`.
 
 | | |
 |---|---|
-| **UTMOS** — Saeki et al., *UTMOS: UTokyo-SaruLab System for VoiceMOS Challenge 2022*, Interspeech 2022. The stacking recipe this directory implements. | [arXiv:2204.02152](https://arxiv.org/abs/2204.02152) · [local PDF](../papers/UTMOS%3A%20UTokyo-SaruLab%20System%20for%20VoiceMOS%20Challenge%202022.pdf) · [code](../papers/UTMOS22) |
-| **ECAPA-TDNN** — Desplanques et al., Interspeech 2020. | [arXiv:2005.07143](https://arxiv.org/abs/2005.07143) · [local PDF](../papers/ECAPA-TDNN%3A%20Emphasized%20Channel%20Attention%2C%20Propagation%20and%20Aggregation%20in%20TDNN%20Based%20Speaker%20Verification.pdf) |
-| **ERes2NetV2** — Chen et al., Interspeech 2024. | [arXiv:2406.02167](https://arxiv.org/abs/2406.02167) · [local PDF](../papers/ERes2NetV2%3A%20Boosting%20Short-Duration%20Speaker%20Verification%20Performance%20with%20Computational%20Efficiency.pdf) |
+| **UTMOS** — Saeki et al., *UTMOS: UTokyo-SaruLab System for VoiceMOS Challenge 2022*, Interspeech 2022. The stacking recipe this directory implements. | [arXiv:2204.02152](https://arxiv.org/abs/2204.02152) · [code](https://github.com/sarulab-speech/UTMOS22) |
+| **ECAPA-TDNN** — Desplanques et al., Interspeech 2020. | [arXiv:2005.07143](https://arxiv.org/abs/2005.07143) |
+| **ERes2NetV2** — Chen et al., Interspeech 2024. | [arXiv:2406.02167](https://arxiv.org/abs/2406.02167) |
 | **CommonAccent** — Zuluaga-Gomez et al., Interspeech 2023. | [arXiv:2305.18283](https://arxiv.org/abs/2305.18283) |
 | **WavLM** — Chen et al., IEEE JSTSP 2022. | [arXiv:2110.13900](https://arxiv.org/abs/2110.13900) |
 | **wav2vec 2.0** — Baevski et al., NeurIPS 2020. | [arXiv:2006.11477](https://arxiv.org/abs/2006.11477) |
 | **XLS-R** — Babu et al., 2021. Source of `WAV2VEC2_XLSR_300M`. | [arXiv:2111.09296](https://arxiv.org/abs/2111.09296) |
 | **HuBERT** — Hsu et al., 2021. Not used yet; the natural fourth SSL bundle. | [arXiv:2106.07447](https://arxiv.org/abs/2106.07447) |
-| **Tseng et al.** — *Utilizing Self-supervised Representations for MOS Prediction*, Interspeech 2021. Frozen wav2vec 2.0 features give UTT-LCC 0.734 vs 0.215 for mel-spectrograms — the prior evidence that frozen SSL features carry this signal. | [local PDF](../papers/Utilizing%20Self-supervised%20Representations%20for%20MOS%20Prediction.pdf) |
+| **Tseng et al.** — *Utilizing Self-supervised Representations for MOS Prediction*, Interspeech 2021. Frozen wav2vec 2.0 features give UTT-LCC 0.734 vs 0.215 for mel-spectrograms — the prior evidence that frozen SSL features carry this signal. | [arXiv:2104.03017](https://arxiv.org/abs/2104.03017) |
 | **LightGBM** — Ke et al., NeurIPS 2017. Replaced here by sklearn's equivalent. | [code](https://github.com/microsoft/LightGBM) |
 | **scikit-learn** — Pedregosa et al., JMLR 2011. | [code](https://github.com/scikit-learn/scikit-learn) |
 
 ### Implementations
 
-- [sarulab-speech/UTMOS22](https://github.com/sarulab-speech/UTMOS22) — vendored at
-  [../papers/UTMOS22](../papers/UTMOS22). The stage-1/2/3 design, the five learner families
-  and mean-pooled SSL features all come from
-  [`stacking/ensemble_multidomain_scripts/`](../papers/UTMOS22/stacking/ensemble_multidomain_scripts/).
+- [sarulab-speech/UTMOS22](https://github.com/sarulab-speech/UTMOS22) — the stage-1/2/3 design,
+  the five learner families and mean-pooled SSL features all come from
+  [`stacking/ensemble_multidomain_scripts/`](https://github.com/sarulab-speech/UTMOS22/tree/master/stacking/ensemble_multidomain_scripts).
 - [pytorch/audio pipelines](https://docs.pytorch.org/audio/stable/pipelines.html) — all SSL
   bundles, replacing UTMOS22's fairseq checkpoints.
 - [speechbrain/speechbrain](https://github.com/speechbrain/speechbrain) — ECAPA and
   CommonAccent checkpoints.
-- [modelscope/3D-Speaker](https://github.com/modelscope/3D-Speaker) — ERes2NetV2, vendored at
-  [../papers/3D-Speaker](../papers/3D-Speaker).
+- [modelscope/3D-Speaker](https://github.com/modelscope/3D-Speaker) — ERes2NetV2.
 
 ### Related directories
 
 - [../unified/](../unified/) — the deep models this pool is combined with.
 - `track3/utmos-approach/` — UTMOS's *loss*, the other half of the same paper (research branch).
-- [../papers/IDEAS.md](../papers/IDEAS.md) — the survey this experiment was selected from.
 - [../jobs/weak/](../jobs/weak/) — the Slurm drivers: `voicemos-track3-weak-phase1.sh` runs
   everything above; `voicemos-track3-deep-test-inference.sh` generates the deep pool's test
   predictions, which `stack.py --require-test` needs in order to write a submission.
