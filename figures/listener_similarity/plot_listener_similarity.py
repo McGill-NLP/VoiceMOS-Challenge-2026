@@ -81,45 +81,32 @@ def make_plot(rows, output_dir):
         "ps.fonttype": 42,
         "svg.fonttype": "none",
     })
-    fig, axes = plt.subplots(
-        1, 2, figsize=(7.2, max(3.0, 0.21 * len(rows) + 1.1)),
-        sharey=True, layout="constrained",
+    fig, ax = plt.subplots(
+        figsize=(4.3, 4.0), layout="constrained",
     )
     positions = np.arange(len(rows))
     correlations = np.array([r["speaker_accent_srcc"] for r in rows])
-    percentages = np.array([r["identical_percent"] for r in rows])
     finite = correlations[np.isfinite(correlations)]
     lower = -1.02 if len(finite) and finite.min() < 0 else -0.02
-
-    for ax, values, color, title, label, limits, ticks, pattern, offset in [
-        (axes[0], correlations, "#0072B2", "(a) Association between ratings",
-         "Speaker–accent Spearman correlation", (lower, 1.18),
-         [-1, -0.5, 0, 0.5, 1] if lower < -1 else [0, 0.25, 0.5, 0.75, 1],
-         ".3f", 0.025),
-        (axes[1], percentages, "#D55E00", "(b) Identical ratings",
-         "Identical speaker and accent scores (%)", (-2, 118),
-         [0, 25, 50, 75, 100], ".1f", 2.5),
-    ]:
-        for y in positions[::2]:
-            ax.axhspan(y - 0.5, y + 0.5, color="#F3F5F7", zorder=0)
-        ax.scatter(values, positions, s=25, color=color, zorder=3)
-        for y, value in zip(positions, values):
-            if np.isfinite(value):
-                ax.text(value + offset, y, format(value, pattern), va="center", fontsize=8)
-            else:
-                ax.text(0.02, y, "undefined", va="center", fontsize=8, color="#666666")
-        ax.set(title=title, xlabel=label, xlim=limits, xticks=ticks)
-        ax.grid(axis="x", color="#DDDDDD", linewidth=0.6)
-        ax.set_axisbelow(True)
-        ax.tick_params(axis="y", length=0)
-        for spine in ["top", "right", "left"]:
-            ax.spines[spine].set_visible(False)
-
-    axes[0].set_yticks(positions, [
-        f"{r['listener_id']}  ({r['n_ratings']:,})" for r in rows
-    ])
-    axes[0].set_ylabel("Listener ID (number of rated pairs)")
-    axes[0].set_ylim(len(rows) - 0.5, -0.5)
+    for y in positions[::2]:
+        ax.axhspan(y - 0.5, y + 0.5, color="#F3F5F7", zorder=0)
+    ax.scatter(correlations, positions, s=20, color="#0072B2", zorder=3)
+    for y, value in zip(positions, correlations):
+        if np.isfinite(value):
+            ax.text(value + 0.025, y, f"{value:.3f}", va="center", fontsize=7.5)
+        else:
+            ax.text(0.02, y, "undefined", va="center", fontsize=7.5, color="#666666")
+    ax.set(title="Association between ratings", xlabel="Speaker–accent Spearman correlation",
+           xlim=(lower, 1.18),
+           xticks=[-1, -0.5, 0, 0.5, 1] if lower < -1 else [0, 0.25, 0.5, 0.75, 1])
+    ax.grid(axis="x", color="#DDDDDD", linewidth=0.6)
+    ax.set_axisbelow(True)
+    ax.tick_params(axis="y", length=0, labelsize=8, pad=2)
+    for spine in ["top", "right", "left"]:
+        ax.spines[spine].set_visible(False)
+    ax.set_yticks(positions, [r["listener_id"] for r in rows])
+    ax.set_ylabel("Listener ID")
+    ax.set_ylim(len(rows) - 0.5, -0.5)
     for extension in ["pdf", "png", "svg"]:
         path = output_dir / f"listener_similarity.{extension}"
         fig.savefig(path, dpi=300, bbox_inches="tight")

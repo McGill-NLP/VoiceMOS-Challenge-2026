@@ -18,23 +18,26 @@ Outputs:
 - `listener_similarity.svg`: editable vector figure.
 - `listener_similarity.csv`: exact per-listener statistics.
 
-Panel (a) shows Spearman correlation between each listener's paired speaker and
-accent ratings. Panel (b) shows the percentage of pairs assigned exactly the same
-score on both dimensions. Both panels order listeners by decreasing correlation;
-labels include the number of rated pairs. Correlation is marked undefined when
+The plot shows Spearman correlation between each listener's paired speaker and
+accent ratings, ordered by decreasing correlation and labeled by listener ID.
+Rating counts and identical-score percentages remain in the CSV statistics,
+but are not plotted. Correlation is marked undefined when
 either dimension is constant. No listeners are removed, and ratings are not
 averaged across listeners. These are descriptive statistics, without confidence
 intervals.
 
 High correlation means that a listener ranks the two dimensions similarly; it
-does not necessarily mean they assign identical scores. Neither measure alone
+does not necessarily mean they assign identical scores. Correlation alone
 establishes that a listener confuses speaker and accent, or explains why accent
 similarity is harder for models to predict. Listener groups can also differ in
 which samples they rated.
 
+The figure uses a compact height for one-column placement: 4.3 by 4.0 inches
+in the script and 6.5 by 6.0 inches in the LaTeX notebook. Widths are unchanged;
+smaller listener labels and markers keep the 25 rows readable.
+
 Suggested caption:
 
 > Association between speaker and accent similarity ratings for each of the 25
-> training listeners: (a) within-listener Spearman correlation and (b) percentage
-> of identical scores. Listeners are ordered by correlation; numbers in
-> parentheses indicate the number of rated pairs.
+> training listeners, measured by within-listener Spearman correlation.
+> Listeners are ordered by correlation and labeled by ID.
